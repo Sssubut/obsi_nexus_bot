@@ -1,6 +1,9 @@
 import express from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 // в памяти храним очереди сообщений для каждого пользователя (привязаны к syncCode / chat_id)
 const userQueues = new Map<string, any[]>();
