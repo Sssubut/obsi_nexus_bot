@@ -10,31 +10,32 @@ const userQueues = new Map<string, any[]>();
 let lastUpdateId = 0;
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '6852938152:AAH_g7K7kLMpdWqpU9X8X1vQz7Zdf_ex990';
+const TELEGRAM_API_BASE = process.env.TELEGRAM_API_BASE_URL || 'https://api.telegram.org';
 
 // Помощник для отправки сообщений обратно в Telegram
 async function sendTelegramMessage(chatId: string | number, text: string) {
   try {
-    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+    await fetch(`${TELEGRAM_API_BASE}/bot${BOT_TOKEN}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         chat_id: chatId,
         text,
-        parse_mode: 'HTML'
-      })
+        parse_mode: "HTML",
+      }),
     });
   } catch (err) {
-    console.error('Error sending response to Telegram:', err);
+    console.error("Error sending response to Telegram:", err);
   }
 }
 
 // Вечный цикл поллинга для общего бота
 async function startTelegramPolling() {
-  console.log(`Starting Telegram background polling with token: ${BOT_TOKEN.substring(0, 10)}...`);
+  console.log(`Starting Telegram background polling with token: ${BOT_TOKEN.substring(0, 10)}... (Base URL: ${TELEGRAM_API_BASE})`);
   
   while (true) {
     try {
-      const url = `https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=${lastUpdateId + 1}&timeout=30`;
+      const url = `${TELEGRAM_API_BASE}/bot${BOT_TOKEN}/getUpdates?offset=${lastUpdateId + 1}&timeout=30`;
       const response = await fetch(url);
       if (response.ok) {
         const data = await response.json() as any;
@@ -141,7 +142,7 @@ async function runServer() {
 
     try {
       // 1. Запрашиваем путь к файлу у Telegram
-      const fileInfoUrl = `https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${fileId}`;
+      const fileInfoUrl = `${TELEGRAM_API_BASE}/bot${BOT_TOKEN}/getFile?file_id=${fileId}`;
       const infoRes = await fetch(fileInfoUrl);
       if (!infoRes.ok) {
         res.status(500).json({ ok: false, error: 'Failed to fetch file info from Telegram' });
@@ -157,7 +158,12 @@ async function runServer() {
       const telegramFilePath = infoData.result.file_path;
 
       // 2. Скачиваем его и стримим клиенту напрямую в сокет
-      const downloadUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${telegramFilePath}`;
+      // Для скачивания файлов используется специальный url, который тоже заменяем с api.telegram.org/file на base_url/file
+      const fileBaseUrl = TELEGRAM_API_BASE.replace('https://api.telegram.org', 'https://api.telegram.org/file') + `/bot${BOT_TOKEN}/${telegramFilePath}`;
+      const downloadUrl = TELEGRAM_API_BASE.includes('api.telegram.org') 
+        ? `https://api.telegram.org/file/bot${BOT_TOKEN}/${telegramFilePath}`
+        : `${TELEGRAM_API_BASE}/file/bot${BOT_TOKEN}/${telegramFilePath}`; // Поддержка структуры зеркала
+      
       const fileRes = await fetch(downloadUrl);
       if (!fileRes.ok || !fileRes.body) {
         res.status(500).json({ ok: false, error: 'Failed to download file content from Telegram' });
