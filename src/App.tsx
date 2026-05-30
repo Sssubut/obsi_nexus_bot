@@ -23,6 +23,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { PluginSettings, MockMessage } from './types';
 import { 
   generateMainTs, 
+  generatePureMainJs,
   generateManifestJson, 
   generatePackageJson, 
   generateStylesCss, 
@@ -38,7 +39,7 @@ export default function App() {
   });
 
   // 2. Active View Tabs
-  const [activeTab, setActiveTab] = useState<'main' | 'manifest' | 'package' | 'styles' | 'readme'>('main');
+  const [activeTab, setActiveTab] = useState<'main' | 'purejs' | 'manifest' | 'package' | 'styles' | 'readme'>('purejs'); // Default to purejs for an instant working copy-paste code!
   const [copiedFile, setCopiedFile] = useState<string | null>(null);
 
   // 3. Mock Sandbox Message
@@ -59,6 +60,7 @@ export default function App() {
 
   // Dynamic code blocks computation
   const mainTsCode = useMemo(() => generateMainTs(settings), [settings]);
+  const pureJsCode = useMemo(() => generatePureMainJs(settings), [settings]);
   const manifestJsonCode = useMemo(() => generateManifestJson(), []);
   const packageJsonCode = useMemo(() => generatePackageJson(), []);
   const stylesCssCode = useMemo(() => generateStylesCss(), []);
@@ -348,6 +350,18 @@ ${mockMessage.photoName ? `## Вложения\n![[${mockMessage.photoName}]]` :
               
               <div className="flex flex-wrap gap-1 bg-[#161616] p-1 rounded">
                 <button
+                  onClick={() => setActiveTab('purejs')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded font-bold transition-all cursor-pointer ${
+                    activeTab === 'purejs' 
+                      ? 'bg-[#3e3e3e] text-amber-300 shadow-sm border-l-2 border-amber-500' 
+                      : 'text-gray-400 hover:text-white hover:bg-[#2f2f2f]'
+                  }`}
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
+                  <span className="font-mono">main.js (БЕЗ СБОРКИ) ⭐</span>
+                </button>
+
+                <button
                   onClick={() => setActiveTab('main')}
                   className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded font-medium transition-all cursor-pointer ${
                     activeTab === 'main' 
@@ -356,7 +370,7 @@ ${mockMessage.photoName ? `## Вложения\n![[${mockMessage.photoName}]]` :
                   }`}
                 >
                   <FileText className="w-3.5 h-3.5 text-[#7b61ff]" />
-                  <span className="font-mono">main.ts</span>
+                  <span className="font-mono">main.ts (Исходник)</span>
                 </button>
 
                 <button
@@ -368,7 +382,7 @@ ${mockMessage.photoName ? `## Вложения\n![[${mockMessage.photoName}]]` :
                   }`}
                 >
                   <BookOpen className="w-3.5 h-3.5 text-emerald-400" />
-                  <span className="font-mono">Установка и API</span>
+                  <span className="font-mono">Инструкция</span>
                 </button>
 
                 <button
@@ -413,6 +427,7 @@ ${mockMessage.photoName ? `## Вложения\n![[${mockMessage.photoName}]]` :
                 <button
                   onClick={() => {
                     const activeContent = 
+                      activeTab === 'purejs' ? pureJsCode :
                       activeTab === 'main' ? mainTsCode :
                       activeTab === 'manifest' ? manifestJsonCode :
                       activeTab === 'package' ? packageJsonCode :
@@ -437,11 +452,13 @@ ${mockMessage.photoName ? `## Вложения\n![[${mockMessage.photoName}]]` :
                 <button
                   onClick={() => {
                     const activeContent = 
+                      activeTab === 'purejs' ? pureJsCode :
                       activeTab === 'main' ? mainTsCode :
                       activeTab === 'manifest' ? manifestJsonCode :
                       activeTab === 'package' ? packageJsonCode :
                       activeTab === 'styles' ? stylesCssCode : readmeMarkdown;
                     const fileName = 
+                      activeTab === 'purejs' ? 'main.js' :
                       activeTab === 'main' ? 'main.ts' :
                       activeTab === 'manifest' ? 'manifest.json' :
                       activeTab === 'package' ? 'package.json' :
@@ -469,7 +486,8 @@ ${mockMessage.photoName ? `## Вложения\n![[${mockMessage.photoName}]]` :
                     <span className="w-2.5 h-2.5 rounded-full bg-emerald-500/80" />
                   </div>
                   <span className="text-xs font-mono text-zinc-400 border-l border-[#3e3e3e] pl-3.5 ml-1.5 italic">
-                    {activeTab === 'main' ? 'telegram-sync/main.ts' :
+                    {activeTab === 'purejs' ? 'telegram-sync/main.js (ГОТОВЫЙ ВАРИАНТ)' :
+                     activeTab === 'main' ? 'telegram-sync/main.ts (ТРЕБУЕТ СБОРКИ)' :
                      activeTab === 'manifest' ? 'telegram-sync/manifest.json' :
                      activeTab === 'package' ? 'telegram-sync/package.json' :
                      activeTab === 'styles' ? 'telegram-sync/styles.css' : 'README.md'}
@@ -477,7 +495,8 @@ ${mockMessage.photoName ? `## Вложения\n![[${mockMessage.photoName}]]` :
                 </div>
 
                 <div className="text-[10px] font-mono text-[#a78bfa] bg-[#161616] px-2.5 py-1 rounded">
-                  {activeTab === 'main' ? 'TypeScript' :
+                  {activeTab === 'purejs' ? 'JavaScript (Установка в 1 клик)' :
+                   activeTab === 'main' ? 'TypeScript (TypeScript исходник)' :
                    activeTab === 'manifest' ? 'JSON Manifest' :
                    activeTab === 'package' ? 'JSON Package' :
                    activeTab === 'styles' ? 'CSS' : 'Markdown Guide'}
@@ -486,6 +505,9 @@ ${mockMessage.photoName ? `## Вложения\n![[${mockMessage.photoName}]]` :
 
               {/* Box container for actual display - Matching the Dark Polish design */}
               <div className="flex-1 p-6 font-mono text-xs leading-relaxed overflow-x-auto text-zinc-300 max-h-[645px] overflow-y-auto bg-[#161616]">
+                {activeTab === 'purejs' && (
+                  <pre className="text-zinc-300 whitespace-pre scrollbar-thin">{pureJsCode}</pre>
+                )}
                 {activeTab === 'main' && (
                   <pre className="text-zinc-300 whitespace-pre scrollbar-thin">{mainTsCode}</pre>
                 )}
