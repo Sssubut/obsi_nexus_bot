@@ -123,6 +123,48 @@ export default class TelegramSyncPlugin extends Plugin {
       let text = msg.text || msg.caption || '';
       let downloadedFileName = '';
 
+      // Обработка системных команд бота (/start, /help, /status)
+      if (text && text.startsWith('/')) {
+        const command = text.split(' ')[0].toLowerCase();
+        
+        if (command === '/start' || command === '/help') {
+          const startMsg = \`👋 *Привет! Я твой Telegram-Obsidian ассистент!*
+
+Отправь мне любой текст, мысль, ссылку, картинку или документ, и я мгновенно сохраню это в твой локальный архив Obsidian.
+
+*Доступные действия:*
+• Просто отправь текст — создам .md заметку с YAML метаданными.
+• Прикрепи картинку/фото — скачаю в Media и встрою в заметку.
+• Отправь документ или файл — бережно сохраню в твой сейф.
+• Отправь команду /status — чтобы проверить состояние подключения.
+
+_Плагин запущен и ожидает твоих заметок!_\`;
+          
+          if (this.bot) {
+            await this.bot.sendMessage(msg.chat.id, startMsg, { parse_mode: 'Markdown' });
+          }
+          this.processedSet.add(msg.message_id);
+          await this.saveSettings();
+          return;
+        }
+
+        if (command === '/status') {
+          const statusMsg = \`📡 *Telegram Sync: Статус активен!*
+
+• Папка заметок: \\\`\${this.settings.defaultFolderPath}\\\`
+• Папка вложений: \\\`\${this.settings.mediaPath}\\\`
+• Сообщений сохранено: \\\`\${this.processedSet.size}\\\` (за сессию)
+• Синхронизация: *Работает (Long Polling)*\`;
+
+          if (this.bot) {
+            await this.bot.sendMessage(msg.chat.id, statusMsg, { parse_mode: 'Markdown' });
+          }
+          this.processedSet.add(msg.message_id);
+          await this.saveSettings();
+          return;
+        }
+      }
+
       // Обработка фотографий
       if (msg.photo && msg.photo.length > 0 && this.bot) {
         // Выбираем самое качественное изображение (последнее в массиве)
@@ -194,6 +236,14 @@ date: \${formattedDateForContent}
 
       // Записываем .md файл с контентом на диск через fs/promises
       await fs.writeFile(fullNotePath, noteContent, 'utf-8');
+
+      // Отправляем авто-ответ пользователю в Telegram о том, что заметка сохранена
+      if (this.bot) {
+        const confirmationMsg = \`✅ *Заметка успешно создана в Obsidian!*
+• Файл: \\\`\${noteFileName}\\\`
+• Папка: \\\`\${this.settings.defaultFolderPath}\\\`\`;
+        await this.bot.sendMessage(msg.chat.id, confirmationMsg, { parse_mode: 'Markdown' });
+      }
 
       // Добавляем ID сообщения в набор обработанных
       this.processedSet.add(msg.message_id);
@@ -408,6 +458,25 @@ module.exports = class TelegramSyncPlugin extends Plugin {
     }
   }
 
+  async sendTelegramMessage(chatId, text) {
+    if (!this.settings.botToken) return;
+    try {
+      const url = \`https://api.telegram.org/bot\${this.settings.botToken}/sendMessage\`;
+      await requestUrl({
+        url,
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: text,
+          parse_mode: 'Markdown'
+        })
+      });
+    } catch (err) {
+      console.error('Telegram Sync: Ошибка при отправке ответа в Telegram:', err);
+    }
+  }
+
   async handleTelegramMessage(msg) {
     if (!msg.message_id) return;
     
@@ -424,6 +493,44 @@ module.exports = class TelegramSyncPlugin extends Plugin {
 
       let text = msg.text || msg.caption || '';
       let downloadedFileName = '';
+
+      // Обработка системных команд бота (/start, /help, /status)
+      if (text && text.startsWith('/')) {
+        const command = text.split(' ')[0].toLowerCase();
+        
+        if (command === '/start' || command === '/help') {
+          const startMsg = \`👋 *Привет! Я твой Telegram-Obsidian ассистент!*
+
+Отправь мне любой текст, мысль, ссылку, картинку или документ, и я мгновенно сохраню это в твой локальный архив Obsidian.
+
+*Доступные действия:*
+• Просто отправь текст — создам .md заметку с YAML метаданными.
+• Прикрепи картинку/фото — скачаю в Media и встрою в заметку.
+• Отправь документ или файл — бережно сохраню в твой сейф.
+• Отправь команду /status — чтобы проверить состояние подключения.
+
+_Плагин запущен и ожидает твоих заметок!_\`;
+          
+          await this.sendTelegramMessage(msg.chat.id, startMsg);
+          this.processedSet.add(msg.message_id);
+          await this.saveSettings();
+          return;
+        }
+
+        if (command === '/status') {
+          const statusMsg = \`📡 *Telegram Sync: Статус активен!*
+
+• Папка заметок: \\\`\${this.settings.defaultFolderPath}\\\`
+• Папка вложений: \\\`\${this.settings.mediaPath}\\\`
+• Сообщений сохранено: \\\`\${this.processedSet.size}\\\` (за сессию)
+• Синхронизация: *Работает (Long Polling)*\`;
+
+          await this.sendTelegramMessage(msg.chat.id, statusMsg);
+          this.processedSet.add(msg.message_id);
+          await this.saveSettings();
+          return;
+        }
+      }
 
       // Скачивание фото
       if (msg.photo && msg.photo.length > 0) {
@@ -471,6 +578,12 @@ date: \${formattedDateForContent}
 
       const fullNotePath = path.join(defaultFolderAbsolute, noteFileName);
       await fs.writeFile(fullNotePath, noteContent, 'utf-8');
+
+      // Отправляем авто-ответ пользователю в Telegram о том, что заметка сохранена
+      const confirmationMsg = \`✅ *Заметка успешно создана в Obsidian!*
+• Файл: \\\`\${noteFileName}\\\`
+• Папка: \\\`\${this.settings.defaultFolderPath}\\\`\`;
+      await this.sendTelegramMessage(msg.chat.id, confirmationMsg);
 
       // Сохраняем ID, чтобы предотвратить дублирование при перезапуске
       this.processedSet.add(msg.message_id);
