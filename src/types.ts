@@ -2,6 +2,9 @@ export interface PluginSettings {
   botToken: string;
   defaultFolderPath: string;
   mediaPath: string;
+  mode: 'private' | 'shared';
+  syncCode: string;
+  syncServerUrl: string;
 }
 
 export interface MockMessage {

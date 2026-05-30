@@ -1,0 +1,210 @@
+import express from 'express';
+import path from 'path';
+import { createServer as createViteServer } from 'vite';
+
+// в памяти храним очереди сообщений для каждого пользователя (привязаны к syncCode / chat_id)
+const userQueues = new Map<string, any[]>();
+let lastUpdateId = 0;
+
+const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '6852938152:AAH_g7K7kLMpdWqpU9X8X1vQz7Zdf_ex990';
+
+// Помощник для отправки сообщений обратно в Telegram
+async function sendTelegramMessage(chatId: string | number, text: string) {
+  try {
+    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text,
+        parse_mode: 'HTML'
+      })
+    });
+  } catch (err) {
+    console.error('Error sending response to Telegram:', err);
+  }
+}
+
+// Вечный цикл поллинга для общего бота
+async function startTelegramPolling() {
+  console.log(`Starting Telegram background polling with token: ${BOT_TOKEN.substring(0, 10)}...`);
+  
+  while (true) {
+    try {
+      const url = `https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=${lastUpdateId + 1}&timeout=30`;
+      const response = await fetch(url);
+      if (response.ok) {
+        const data = await response.json() as any;
+        if (data.ok && data.result) {
+          for (const update of data.result) {
+            lastUpdateId = Math.max(lastUpdateId, update.update_id);
+            
+            const message = update.message;
+            if (message && message.chat && message.chat.id) {
+              const syncCode = String(message.chat.id);
+              const text = message.text || message.caption || '';
+              
+              if (text && (text.startsWith('/start') || text.startsWith('/help'))) {
+                const greeting = `👋 <b>Привет! Я твой Telegram-Obsidian ассистент!</b>
+                
+У тебя включен <b>Облачный режим (Cloud Sync)</b>.
+
+Твой персональный <b>Код синхронизации</b>:
+<code>${syncCode}</code>
+
+<b>Как настроить плагин в Obsidian:</b>
+1. Открой настройки плагина Telegram Sync во вкладке "Сторонние плагины".
+2. Измени "Режим подключения" на <b>"Общий бот (Cloud Sync)"</b>.
+3. Вставь твой <b>Код синхронизации</b>: <code>${syncCode}</code>.
+4. Нажмите "Запустить" и плагин начнёт работать!
+
+Теперь отправь мне любой текст, ссылку, картинку или документ, и твоя Obsidian-копия мгновенно загрузит это к себе в виде красивой .md заметки в режиме реального времени!`;
+                
+                await sendTelegramMessage(syncCode, greeting);
+              } else if (text && text.startsWith('/status')) {
+                const statusInfo = `📡 <b>Статус синхронизации: Активен!</b>
+                
+• Код синхронизации: <code>${syncCode}</code>
+• Сообщений в очереди: <code>${(userQueues.get(syncCode) || []).length}</code> ожидают загрузки в Obsidian.`;
+                
+                await sendTelegramMessage(syncCode, statusInfo);
+              } else {
+                // Обычное сообщение — ставим в очередь для этого пользователя
+                let queue = userQueues.get(syncCode);
+                if (!queue) {
+                  queue = [];
+                  userQueues.set(syncCode, queue);
+                }
+                
+                // Защита от дублей
+                if (!queue.some(item => item.update_id === update.update_id)) {
+                  queue.push(update);
+                }
+              }
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Error fetching Telegram updates in background:', e);
+      await new Promise(resolve => setTimeout(resolve, 5000));
+    }
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  }
+}
+
+async function runServer() {
+  const app = express();
+  const PORT = 3000;
+
+  // Запуск фонового прослушивания Telegram
+  startTelegramPolling();
+
+  // API эндпоинты
+  app.get('/api/health', (req, res) => {
+    res.json({ status: 'ok', botTokenConfigured: !!BOT_TOKEN });
+  });
+
+  // Эндпоинт для Obsidian-клиента, чтобы забрать обновления конкретного юзера
+  app.get('/api/updates', (req, res) => {
+    const syncCode = req.query.syncCode as string;
+    if (!syncCode) {
+      res.status(400).json({ ok: false, error: 'syncCode query parameter is required' });
+      return;
+    }
+
+    const queue = userQueues.get(syncCode) || [];
+    // Сбрасываем очередь после отдачи, чтобы не отправлять повторно
+    userQueues.set(syncCode, []);
+
+    res.json({
+      ok: true,
+      result: queue
+    });
+  });
+
+  // Эндпоинт для скачивания медиа-файлов через сервер без слива приватного токена
+  app.get('/api/file', async (req, res) => {
+    const fileId = req.query.file_id as string;
+    if (!fileId) {
+      res.status(400).json({ ok: false, error: 'file_id parameter is required' });
+      return;
+    }
+
+    try {
+      // 1. Запрашиваем путь к файлу у Telegram
+      const fileInfoUrl = `https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${fileId}`;
+      const infoRes = await fetch(fileInfoUrl);
+      if (!infoRes.ok) {
+        res.status(500).json({ ok: false, error: 'Failed to fetch file info from Telegram' });
+        return;
+      }
+
+      const infoData = await infoRes.json() as any;
+      if (!infoData.ok || !infoData.result?.file_path) {
+        res.status(404).json({ ok: false, error: 'Telegram file not found' });
+        return;
+      }
+
+      const telegramFilePath = infoData.result.file_path;
+
+      // 2. Скачиваем его и стримим клиенту напрямую в сокет
+      const downloadUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${telegramFilePath}`;
+      const fileRes = await fetch(downloadUrl);
+      if (!fileRes.ok || !fileRes.body) {
+        res.status(500).json({ ok: false, error: 'Failed to download file content from Telegram' });
+        return;
+      }
+
+      res.setHeader('Content-Type', 'application/octet-stream');
+      
+      // Стриминг бинарных чанков
+      const reader = fileRes.body.getReader();
+      const pump = async () => {
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) {
+              res.end();
+              break;
+            }
+            res.write(Buffer.from(value));
+          }
+        } catch (e) {
+          console.error('Streaming error:', e);
+          res.end();
+        }
+      };
+      
+      await pump();
+
+    } catch (e: any) {
+      console.error('File proxy error:', e);
+      res.status(500).json({ ok: false, error: e.message || 'Internal file proxy error' });
+    }
+  });
+
+  // Подключаем Vite в режиме разработки
+  if (process.env.NODE_ENV !== 'production') {
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: 'spa'
+    });
+    app.use(vite.middlewares);
+  } else {
+    // В продакшене отдаем статический билд
+    const distPath = path.join(process.cwd(), 'dist');
+    app.use(express.static(distPath));
+    app.get('*', (req, res) => {
+      res.sendFile(path.join(distPath, 'index.html'));
+    });
+  }
+
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server listening on Port ${PORT}`);
+  });
+}
+
+runServer().catch(err => {
+  console.error('Failed to start server:', err);
+});

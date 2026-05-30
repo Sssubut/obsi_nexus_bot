@@ -33,7 +33,10 @@ import {
 export default function App() {
   // 1. Core Config state
   const [settings, setSettings] = useState<PluginSettings>({
+    mode: 'shared',
     botToken: '6852938152:AAH_g7K7kLMpdWqpU9X8X1vQz7Zdf_ex990',
+    syncCode: '',
+    syncServerUrl: typeof window !== 'undefined' ? window.location.origin : '',
     defaultFolderPath: 'Telegram Notes',
     mediaPath: 'Telegram Notes/Media'
   });
@@ -58,13 +61,15 @@ export default function App() {
   const [isTestingConnection, setIsTestingConnection] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
 
+  const currentUrl = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
+
   // Dynamic code blocks computation
-  const mainTsCode = useMemo(() => generateMainTs(settings), [settings]);
-  const pureJsCode = useMemo(() => generatePureMainJs(settings), [settings]);
+  const mainTsCode = useMemo(() => generateMainTs(settings, currentUrl), [settings, currentUrl]);
+  const pureJsCode = useMemo(() => generatePureMainJs(settings, currentUrl), [settings, currentUrl]);
   const manifestJsonCode = useMemo(() => generateManifestJson(), []);
   const packageJsonCode = useMemo(() => generatePackageJson(), []);
   const stylesCssCode = useMemo(() => generateStylesCss(), []);
-  const readmeMarkdown = useMemo(() => generateReadme(settings), [settings]);
+  const readmeMarkdown = useMemo(() => generateReadme(settings, currentUrl), [settings, currentUrl]);
 
   // Handle connection test
   const handleTestConnection = () => {
@@ -189,65 +194,112 @@ ${mockMessage.photoName ? `## Вложения\n![[${mockMessage.photoName}]]` :
                 <span className="text-[10px] bg-zinc-800 text-zinc-400 font-mono px-1.5 py-0.5 rounded">Obsidian-UI</span>
               </div>
 
-              {/* Input for Bot Token */}
+              {/* Inputs for Connection Mode */}
               <div className="space-y-5">
                 <div className="space-y-2">
-                  <div className="flex justify-between">
-                    <label className="text-xs font-semibold text-zinc-300">Telegram Bot Token</label>
-                    <span className="text-[10px] text-zinc-500 font-mono">@BotFather</span>
-                  </div>
-                  <div className="relative">
-                    <input 
-                      type="text" 
-                      className="w-full bg-[#161616] text-xs font-mono border border-[#3e3e3e] rounded px-3 py-2.5 focus:border-[#7b61ff] focus:ring-1 focus:ring-[#7b61ff]/25 outline-none transition-all placeholder-zinc-700 text-[#dcddde]" 
-                      placeholder="123456789:ABCdefGhIJKlm..."
-                      value={settings.botToken}
-                      onChange={(e) => setSettings({ ...settings, botToken: e.target.value })}
-                    />
-                  </div>
-                  <p className="text-[10px] text-zinc-500 leading-relaxed">
-                    Этот токен используется плагином внутри <code className="text-[#a78bfa] font-mono">startPolling()</code> для аутентификации на сервере.
-                  </p>
-                </div>
-
-                {/* Connection verification button */}
-                <div className="pt-1">
-                  <button
-                    onClick={handleTestConnection}
-                    disabled={isTestingConnection}
-                    className="w-full flex items-center justify-center gap-2 bg-[#7b61ff] hover:bg-[#684be8] disabled:opacity-50 text-white font-medium text-xs px-4 py-2.5 rounded transition-all cursor-pointer shadow-sm active:scale-[0.98]"
+                  <label className="text-xs font-semibold text-zinc-300">Режим подключения</label>
+                  <select 
+                    className="w-full bg-[#161616] text-xs border border-[#3e3e3e] rounded px-3 py-2.5 focus:border-[#7b61ff] focus:ring-1 focus:ring-[#7b61ff]/25 outline-none transition-all text-white cursor-pointer"
+                    value={settings.mode || 'shared'}
+                    onChange={(e) => setSettings({ ...settings, mode: e.target.value as 'shared' | 'private' })}
                   >
-                    {isTestingConnection ? (
-                      <>
-                        <RefreshCw className="h-3.5 w-3.5 animate-spin text-white" />
-                        <span className="font-mono text-[11px]">Проверка токена...</span>
-                      </>
-                    ) : (
-                      <>
-                        <Wifi className="h-3.5 w-3.5 text-white" />
-                        <span className="font-mono text-[11px] uppercase tracking-wider">Проверить подключение</span>
-                      </>
-                    )}
-                  </button>
-
-                  <AnimatePresence mode="wait">
-                    {testResult && (
-                      <motion.div
-                        initial={{ opacity: 0, y: -4 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: -4 }}
-                        className={`mt-3 p-3 rounded border text-[11px] leading-relaxed flex items-start gap-2 font-mono ${
-                          testResult.success 
-                            ? 'bg-emerald-950/25 border-emerald-500/25 text-emerald-300' 
-                            : 'bg-red-950/25 border-red-500/25 text-red-300'
-                        }`}
-                      >
-                        <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                        <span>{testResult.message}</span>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
+                    <option value="shared">Общий/Облачный бот (Cloud Sync) ⭐</option>
+                    <option value="private">Свой личный бот (Private Bot)</option>
+                  </select>
                 </div>
+
+                {settings.mode === 'shared' ? (
+                  <>
+                    <div className="space-y-2">
+                      <div className="flex justify-between">
+                        <label className="text-xs font-semibold text-zinc-300">Код синхронизации (Sync Code)</label>
+                        <span className="text-[10px] text-[#7b61ff] font-mono">Твой ID</span>
+                      </div>
+                      <input 
+                        type="text" 
+                        className="w-full bg-[#161616] text-xs font-mono border border-[#3e3e3e] rounded px-3 py-2.5 focus:border-[#7b61ff] focus:ring-1 focus:ring-[#7b61ff]/25 outline-none transition-all placeholder-zinc-700 text-[#dcddde]" 
+                        placeholder="Например, 12345678"
+                        value={settings.syncCode || ''}
+                        onChange={(e) => setSettings({ ...settings, syncCode: e.target.value })}
+                      />
+                      <p className="text-[10px] text-zinc-500 leading-relaxed">
+                        Числовой Telegram ID. Отправьте <code className="text-[#a78bfa] font-mono">/start</code> нашему общему боту, чтобы получить код синхронизации.
+                      </p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="flex justify-between">
+                        <label className="text-xs font-semibold text-zinc-300">Сервер синхронизации</label>
+                      </div>
+                      <input 
+                        type="text" 
+                        className="w-full bg-[#161616]/50 text-xs font-mono border border-dashed border-[#3e3e3e] rounded px-3 py-2.5 outline-none text-zinc-500 cursor-not-allowed" 
+                        value={currentUrl}
+                        disabled
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="space-y-2">
+                      <div className="flex justify-between">
+                        <label className="text-xs font-semibold text-zinc-300">Telegram Bot Token</label>
+                        <span className="text-[10px] text-zinc-500 font-mono">@BotFather</span>
+                      </div>
+                      <div className="relative">
+                        <input 
+                          type="text" 
+                          className="w-full bg-[#161616] text-xs font-mono border border-[#3e3e3e] rounded px-3 py-2.5 focus:border-[#7b61ff] focus:ring-1 focus:ring-[#7b61ff]/25 outline-none transition-all placeholder-zinc-700 text-[#dcddde]" 
+                          placeholder="123456789:ABCdefGhIJKlm..."
+                          value={settings.botToken}
+                          onChange={(e) => setSettings({ ...settings, botToken: e.target.value })}
+                        />
+                      </div>
+                      <p className="text-[10px] text-zinc-500 leading-relaxed">
+                        Этот токен используется плагином внутри <code className="text-[#a78bfa] font-mono">startPolling()</code> для аутентификации на сервере Telegram.
+                      </p>
+                    </div>
+
+                    {/* Connection verification button */}
+                    <div className="pt-1">
+                      <button
+                        onClick={handleTestConnection}
+                        disabled={isTestingConnection}
+                        className="w-full flex items-center justify-center gap-2 bg-[#7b61ff] hover:bg-[#684be8] disabled:opacity-50 text-white font-medium text-xs px-4 py-2.5 rounded transition-all cursor-pointer shadow-sm active:scale-[0.98]"
+                      >
+                        {isTestingConnection ? (
+                          <>
+                            <RefreshCw className="h-3.5 w-3.5 animate-spin text-white" />
+                            <span className="font-mono text-[11px]">Проверка токена...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Wifi className="h-3.5 w-3.5 text-white" />
+                            <span className="font-mono text-[11px] uppercase tracking-wider">Проверить подключение</span>
+                          </>
+                        )}
+                      </button>
+
+                      <AnimatePresence mode="wait">
+                        {testResult && (
+                          <motion.div
+                            initial={{ opacity: 0, y: -4 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: -4 }}
+                            className={`mt-3 p-3 rounded border text-[11px] leading-relaxed flex items-start gap-2 font-mono ${
+                              testResult.success 
+                                ? 'bg-emerald-950/25 border-emerald-500/25 text-emerald-300' 
+                                : 'bg-red-950/25 border-red-500/25 text-red-300'
+                            }`}
+                          >
+                            <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                            <span>{testResult.message}</span>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+                  </>
+                )}
 
                 <hr className="border-[#3e3e3e] my-2" />
 
