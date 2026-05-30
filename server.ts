@@ -84,6 +84,11 @@ async function startTelegramPolling() {
             }
           }
         }
+      } else {
+        const errorText = await response.text();
+        console.error(`Telegram getUpdates failed: Status ${response.status} (${response.statusText}). Body:`, errorText);
+        // If there's a conflict or error, wait a little longer before retrying to prevent rapid polling spam
+        await new Promise(resolve => setTimeout(resolve, 5000));
       }
     } catch (e) {
       console.error('Error fetching Telegram updates in background:', e);
