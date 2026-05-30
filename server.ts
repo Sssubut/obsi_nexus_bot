@@ -94,8 +94,19 @@ async function startTelegramPolling() {
         // If there's a conflict or error, wait a little longer before retrying to prevent rapid polling spam
         await new Promise(resolve => setTimeout(resolve, 5000));
       }
-    } catch (e) {
-      console.error('Error fetching Telegram updates in background:', e);
+    } catch (e: any) {
+      const isConnectionError = e?.message?.includes('fetch failed') || e?.code === 'UND_ERR_CONNECT_TIMEOUT' || e?.message?.includes('timeout') || e?.cause?.code === 'UND_ERR_CONNECT_TIMEOUT';
+      if (isConnectionError) {
+        console.error('\n⚠️  [TELEGRAM CONNECTION ERROR] ⚠️');
+        console.error('Похоже, api.telegram.org заблокирован вашим провайдером или недоступен с локального ПК.');
+        console.error('Чтобы запустить сервер на локалке, воспользуйтесь одним из решений:');
+        console.error('👉 Решение 1: Добавьте в файл .env прокси-сервер (например, https://api.telegram-proxy.org или другой рабочий прокси):');
+        console.error('   TELEGRAM_API_BASE_URL="https://api.telegram-proxy.org"');
+        console.error('👉 Решение 2: Включите системный VPN на вашем компьютере.');
+        console.error('👉 Решение 3: Не запускайте сервер локально вообще! Используйте облачный режим Cloud Sync (он уже работает 24/7 у нас в облаке в Европе и принимает сообщения).\n');
+      } else {
+        console.error('Error fetching Telegram updates in background:', e);
+      }
       await new Promise(resolve => setTimeout(resolve, 5000));
     }
     await new Promise(resolve => setTimeout(resolve, 1000));
