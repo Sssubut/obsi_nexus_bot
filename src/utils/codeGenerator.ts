@@ -1,53 +1,96 @@
-import { PluginSettings } from '../types';
-
-export function generateMainTs(settings: PluginSettings, currentUrl: string): string {
-  const defaultFolder = settings.defaultFolderPath || 'Telegram Notes';
-  const mediaFolder = settings.mediaPath || 'Telegram Notes/Media';
+export function generateMainTs(currentUrl: string): string {
+  const defaultFolder = 'Telegram Notes';
+  const mediaFolder = 'Telegram Notes/Media';
 
   return `import { App, Plugin, PluginSettingTab, Setting, Notice } from 'obsidian';
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import TelegramBot from 'node-telegram-bot-api';
 
 interface TelegramSyncSettings {
-  mode: 'private' | 'shared';
-  botToken: string;
   syncCode: string;
-  syncServerUrl: string;
   defaultFolderPath: string;
   mediaPath: string;
   processedMessageIds: string[];
   lastUpdateId: number;
 }
 
+const SYNC_SERVER_URL = '${currentUrl}';
+
 const DEFAULT_SETTINGS: TelegramSyncSettings = {
-  mode: 'shared',
-  botToken: '',
   syncCode: '',
-  syncServerUrl: '${currentUrl}',
   defaultFolderPath: '${defaultFolder}',
   mediaPath: '${mediaFolder}',
   processedMessageIds: [],
   lastUpdateId: 0
 };
 
+// Преобразует entities Telegram → Markdown
+function formatTelegramText(text: string, entities: any[] | undefined): string {
+  if (!entities || entities.length === 0) return text || '';
+
+  const events: { pos: number; type: string; open: boolean; meta: string }[] = [];
+  for (const e of entities) {
+    events.push({ pos: e.offset, type: e.type, open: true, meta: e.type === 'text_link' ? e.url : (e.type === 'pre' ? (e.language || '') : '') });
+    events.push({ pos: e.offset + e.length, type: e.type, open: false, meta: e.type === 'text_link' ? e.url : '' });
+  }
+  events.sort((a, b) => a.pos - b.pos || (a.open ? 1 : -1) - (b.open ? 1 : -1));
+
+  let result = '';
+  let last = 0;
+  const stack: any[] = [];
+
+  for (const ev of events) {
+    if (ev.pos > last) result += text.substring(last, ev.pos);
+
+    if (ev.open) {
+      switch (ev.type) {
+        case 'bold': result += '**'; break;
+        case 'italic': result += '*'; break;
+        case 'code': result += '\`'; break;
+        case 'strikethrough': result += '~~'; break;
+        case 'underline': result += '<u>'; break;
+        case 'spoiler': result += '||'; break;
+        case 'pre': result += '\`\`\`' + ev.meta + '\\n'; break;
+        case 'text_link': result += '['; break;
+      }
+      stack.push(ev);
+    } else {
+      const prev = stack.pop();
+      if (prev) {
+        switch (ev.type) {
+          case 'bold': result += '**'; break;
+          case 'italic': result += '*'; break;
+          case 'code': result += '\`'; break;
+          case 'strikethrough': result += '~~'; break;
+          case 'underline': result += '</u>'; break;
+          case 'spoiler': result += '||'; break;
+          case 'pre': result += '\\n\`\`\`'; break;
+          case 'text_link': result += '](' + (ev.meta || prev.meta || '') + ')'; break;
+        }
+      }
+    }
+
+    last = ev.pos;
+  }
+
+  if (last < text.length) result += text.substring(last);
+  return result;
+}
+
 export default class TelegramSyncPlugin extends Plugin {
   settings: TelegramSyncSettings;
-  bot: TelegramBot | null = null;
   processedSet: Set<number> = new Set();
   isPolling = false;
 
   async onload() {
     await this.loadSettings();
 
-    // Восстанавливаем ID обработанных сообщений из настроек
     this.processedSet = new Set(
       this.settings.processedMessageIds.map(id => parseInt(id, 10)).filter(id => !isNaN(id))
     );
 
     this.startPolling();
 
-    // Регистрация вкладки настроек
     this.addSettingTab(new TelegramSyncSettingTab(this.app, this));
   }
 
@@ -61,7 +104,6 @@ export default class TelegramSyncPlugin extends Plugin {
   }
 
   async saveSettings() {
-    // Сериализуем Set обратно в массив для сохранения в JSON
     this.settings.processedMessageIds = Array.from(this.processedSet).map(String);
     await this.saveData(this.settings);
   }
@@ -70,78 +112,75 @@ export default class TelegramSyncPlugin extends Plugin {
     if (this.isPolling) return;
     this.isPolling = true;
 
-    if (this.settings.mode === 'private') {
-      if (this.settings.botToken) {
-        try {
-          // Инициализация бота с включенным поллингом
-          this.bot = new TelegramBot(this.settings.botToken, { polling: true });
-
-          // Слушаем входящие сообщения
-          this.bot.on('message', async (msg) => {
-            await this.handleTelegramMessage(msg);
-          });
-
-          this.bot.on('polling_error', (error) => {
-            console.error('Telegram Sync: Ошибка поллинга приватного бота (polling_error):', error);
-          });
-
-          console.log('Telegram Sync: Успешный запуск приватного бота.');
-        } catch (error) {
-          console.error('Telegram Sync: Ошибка инициализации бота:', error);
-          new Notice('Telegram Sync: Ошибка при запуске личного бота. Проверьте ваш токен!');
-          this.isPolling = false;
-        }
-      } else {
-        new Notice('Telegram Sync: Пожалуйста, настройте Bot Token личного бота!');
-        this.isPolling = false;
-      }
+    if (this.settings.syncCode) {
+      this.pollShared();
     } else {
-      // Общий бот (сообщения получаем с нашего сервера-посредника)
-      if (this.settings.syncCode) {
-        this.pollShared();
-      } else {
-        new Notice('Telegram Sync: Пожалуйста, настройте Код синхронизации для общего бота!');
-        this.isPolling = false;
-      }
+      new Notice('Telegram Sync: Пожалуйста, настройте Код синхронизации!');
+      this.isPolling = false;
     }
   }
 
   stopPolling() {
     this.isPolling = false;
-    if (this.bot) {
-      try {
-        this.bot.stopPolling();
-      } catch (e) {
-        console.error('Telegram Sync: Не удалось корректно остановить polling личного бота:', e);
-      }
-      this.bot = null;
-    }
   }
 
   async pollShared() {
-    console.log('Telegram Sync: Запущен поллинг общего бота с сервера:', this.settings.syncServerUrl);
-    while (this.isPolling && this.settings.mode === 'shared') {
+    console.log('Telegram Sync: Запущен поллинг общего бота');
+    while (this.isPolling) {
       if (!this.settings.syncCode) {
         this.stopPolling();
         break;
       }
       try {
-        const url = \`\${this.settings.syncServerUrl}/api/updates?syncCode=\${this.settings.syncCode}\`;
+        const url = \`\${SYNC_SERVER_URL}/api/updates?syncCode=\${this.settings.syncCode}\`;
         // @ts-ignore
         const { requestUrl } = require('obsidian');
         const response = await requestUrl({ url, method: 'GET' });
         
         if (response.status === 200 && response.json && response.json.ok) {
           const updates = response.json.result;
+          const confirmedIds: number[] = [];
           for (const update of updates) {
             this.settings.lastUpdateId = Math.max(this.settings.lastUpdateId || 0, update.update_id);
             if (update.message) {
-              await this.handleTelegramMessage(update.message);
+              const ok = await this.handleTelegramMessage(update.message);
+              if (ok) confirmedIds.push(update.update_id);
             }
           }
           if (updates.length > 0) {
             await this.saveSettings();
           }
+          if (confirmedIds.length > 0) {
+            try {
+              await requestUrl({
+                url: \`\${SYNC_SERVER_URL}/api/confirm\`,
+                method: 'POST',
+                body: JSON.stringify({ syncCode: this.settings.syncCode, update_ids: confirmedIds }),
+                contentType: 'application/json',
+              });
+            } catch (e) {
+              console.error('Telegram Sync: Ошибка подтверждения:', e);
+            }
+          }
+        }
+
+        // Поисковый поллинг
+        try {
+          const searchUrl = \`\${SYNC_SERVER_URL}/api/search?syncCode=\${this.settings.syncCode}\`;
+          const searchRes = await requestUrl({ url: searchUrl, method: 'GET' });
+          if (searchRes.status === 200 && searchRes.json?.ok && searchRes.json.query) {
+            const query = searchRes.json.query;
+            console.log(\`Telegram Sync: Поиск «\${query}»\`);
+            const searchResults = await this.searchNotes(query);
+            await requestUrl({
+              url: \`\${SYNC_SERVER_URL}/api/search-results\`,
+              method: 'POST',
+              body: JSON.stringify({ syncCode: this.settings.syncCode, query, results: searchResults }),
+              contentType: 'application/json',
+            });
+          }
+        } catch (e) {
+          console.error('Telegram Sync: Ошибка поиска:', e);
         }
       } catch (err) {
         console.error('Telegram Sync: Ошибка поллинга сервера общего бота:', err);
@@ -151,10 +190,9 @@ export default class TelegramSyncPlugin extends Plugin {
     }
   }
 
-  async handleTelegramMessage(msg: TelegramBot.Message) {
-    if (!msg.message_id) return;
+  async handleTelegramMessage(msg: any): Promise<boolean> {
+    if (!msg.message_id) return false;
 
-    // Защита от дублирования сообщений при перезапуске плагина
     if (this.processedSet.has(msg.message_id)) {
       return;
     }
@@ -163,62 +201,16 @@ export default class TelegramSyncPlugin extends Plugin {
       const username = msg.from?.username || msg.from?.first_name || 'unknown_user';
       const dateObj = new Date(msg.date * 1000);
 
-      // Форматируем дату для имени файла (YYYY-MM-DD HH-mm-ss)
       const formattedDateForName = dateObj.toISOString()
         .slice(0, 19)
         .replace('T', ' ')
         .replace(/:/g, '-');
 
-      // Форматируем красивую дату для контента
       const formattedDateForContent = dateObj.toLocaleString();
 
-      // Вытаскиваем текст сообщения или caption (если это фото с подписью)
-      let text = msg.text || msg.caption || '';
+      let text = formatTelegramText(msg.text || msg.caption || '', msg.entities || msg.caption_entities);
       let downloadedFileName = '';
 
-      // Обработка системных команд бота (/start, /help, /status) только в приватном режиме (в общем это обрабатывает сервер)
-      if (this.settings.mode === 'private' && text && text.startsWith('/')) {
-        const command = text.split(' ')[0].toLowerCase();
-        
-        if (command === '/start' || command === '/help') {
-          const startMsg = \`👋 <b>Привет! Я твой Telegram-Obsidian ассистент!</b>
-
-Отправь мне любой текст, мысль, ссылку, картинку или документ, и я мгновенно сохраню это в твой локальный архив Obsidian.
-
-<b>Доступные действия:</b>
-• Просто отправь текст — создам .md заметку с YAML метаданными.
-• Прикрепи картинку/фото — скачаю в Media и встрою в заметку.
-• Отправь документ или файл — бережно сохраню в твой сейф.
-• Отправь команду /status — чтобы проверить состояние подключения.
-
-<i>Плагин запущен и ожидает твоих заметок!</i>\`;
-          
-          if (this.bot) {
-            await this.bot.sendMessage(msg.chat.id, startMsg, { parse_mode: 'HTML' });
-          }
-          this.processedSet.add(msg.message_id);
-          await this.saveSettings();
-          return;
-        }
-
-        if (command === '/status') {
-          const statusMsg = \`📡 <b>Telegram Sync: Статус активен!</b>
-
-• Папка заметок: <code>\${this.settings.defaultFolderPath}</code>
-• Папка вложений: <code>\${this.settings.mediaPath}</code>
-• Сообщений сохранено: <code>\${this.processedSet.size}</code> (за сессию)
-• Синхронизация: <b>Работает (Private Bot)</b>\`;
-
-          if (this.bot) {
-            await this.bot.sendMessage(msg.chat.id, statusMsg, { parse_mode: 'HTML' });
-          }
-          this.processedSet.add(msg.message_id);
-          await this.saveSettings();
-          return;
-        }
-      }
-
-      // Обработка фотографий
       if (msg.photo && msg.photo.length > 0) {
         const photo = msg.photo[msg.photo.length - 1];
         const fileId = photo.file_id;
@@ -233,7 +225,6 @@ export default class TelegramSyncPlugin extends Plugin {
         }
       }
 
-      // Обработка оригинальных файлов/документов
       if (msg.document) {
         const fileId = msg.document.file_id;
         try {
@@ -246,12 +237,15 @@ export default class TelegramSyncPlugin extends Plugin {
         }
       }
 
-      // Если текста нет, но было загружено вложение, создаем пояснение
       if (!text && downloadedFileName) {
         text = 'Получено вложение: ' + downloadedFileName;
       }
 
-      // Очищаем текст от недопустимых символов для имени файла
+      if (text.startsWith('/')) {
+        console.log(\`Telegram Sync: Пропущена команда: \${text.split(' ')[0]}\`);
+        return false;
+      }
+
       const sanitizedText = text
         .replace(/[\\\\/:*?"<>|\\n\\r]/g, ' ')
         .substring(0, 30)
@@ -259,18 +253,13 @@ export default class TelegramSyncPlugin extends Plugin {
 
       const sanitizedUser = username.replace(/[\\\\/:*?"<>|\\n\\r]/g, '');
 
-      // Формируем имя файла: {{date}} - {{user}} - {{first 30 chars of text}}.md
       const noteFileName = \`\${formattedDateForName} - \${sanitizedUser} - \${sanitizedText || 'vlozhenie'}.md\`;
 
-      // Получаем физический путь к хранилищу Obsidian
-      // @ts-ignore
       const vaultBasePath = this.app.vault.adapter.getBasePath();
       const defaultFolderAbsolute = path.join(vaultBasePath, this.settings.defaultFolderPath);
 
-      // Создаем директорию для заметок, если она не существует
       await fs.mkdir(defaultFolderAbsolute, { recursive: true });
 
-      // Генерируем контент заметки в строгом соответствии с ТЗ
       const noteContent = \`---
 source: telegram
 from: \${username}
@@ -286,26 +275,17 @@ date: \${formattedDateForContent}
 
       const fullNotePath = path.join(defaultFolderAbsolute, noteFileName);
 
-      // Записываем .md файл с контентом на диск через fs/promises
       await fs.writeFile(fullNotePath, noteContent, 'utf-8');
 
-      // В приватном режиме шлём подтверждение сразу через класс бота
-      if (this.settings.mode === 'private' && this.bot) {
-        const confirmationMsg = \`✅ <b>Заметка успешно создана в Obsidian!</b>
-• Файл: <code>\s\${noteFileName}</code>
-• Папка: <code>\s\${this.settings.defaultFolderPath}</code>\`;
-        await this.bot.sendMessage(msg.chat.id, confirmationMsg, { parse_mode: 'HTML' });
-      }
-
-      // Добавляем ID сообщения в набор обработанных
       this.processedSet.add(msg.message_id);
       
-      // Сохраняем новое состояние на диск
       await this.saveSettings();
 
-      new Notice(\`Telegram Sync: Сообщение успешно сохранено: \s\${noteFileName}\`);
+      new Notice(\`Telegram Sync: Сообщение успешно сохранено: \${noteFileName}\`);
+      return true;
     } catch (error) {
       console.error('Telegram Sync: Ошибка при обработке сообщения:', error);
+      return false;
     }
   }
 
@@ -314,20 +294,8 @@ date: \${formattedDateForContent}
     try {
       // @ts-ignore
       const { requestUrl } = require('obsidian');
-      let fileDataRes;
-
-      if (this.settings.mode === 'shared') {
-        const downloadUrl = \`\${this.settings.syncServerUrl}/api/file?file_id=\${fileId}&syncCode=\${this.settings.syncCode}\`;
-        fileDataRes = await requestUrl({ url: downloadUrl, method: 'GET', contentType: 'application/octet-stream' });
-      } else {
-        if (!this.bot) return null;
-        const fileInfo = await this.bot.getFile(fileId);
-        const filePathOnTelegram = fileInfo.file_path;
-        if (!filePathOnTelegram) return null;
-
-        const downloadUrl = \`https://api.telegram.org/file/bot\${this.settings.botToken}/\${filePathOnTelegram}\`;
-        fileDataRes = await requestUrl({ url: downloadUrl, method: 'GET', contentType: 'application/octet-stream' });
-      }
+      const downloadUrl = \`\${SYNC_SERVER_URL}/api/file?file_id=\${fileId}&syncCode=\${this.settings.syncCode}\`;
+      const fileDataRes = await requestUrl({ url: downloadUrl, method: 'GET', contentType: 'application/octet-stream' });
 
       // @ts-ignore
       const vaultBasePath = this.app.vault.adapter.getBasePath();
@@ -352,6 +320,33 @@ date: \${formattedDateForContent}
       return null;
     }
   }
+
+  // Поиск по заметкам в vault
+  async searchNotes(query: string): Promise<{ filename: string; preview: string }[]> {
+    const vaultBasePath = this.app.vault.adapter.getBasePath();
+    const results: { filename: string; preview: string }[] = [];
+
+    const scanDir = async (dir: string) => {
+      const entries = await fs.readdir(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isDirectory() && !entry.name.startsWith('.')) {
+          await scanDir(fullPath);
+        } else if (entry.name.endsWith('.md')) {
+          const content = await fs.readFile(fullPath, 'utf-8');
+          if (content.toLowerCase().includes(query.toLowerCase())) {
+            const relativePath = path.relative(vaultBasePath, fullPath);
+            const lines = content.split('\\n');
+            const matchLine = lines.find((l: string) => l.toLowerCase().includes(query.toLowerCase())) || '';
+            results.push({ filename: relativePath, preview: matchLine.trim().substring(0, 100) });
+          }
+        }
+      }
+    };
+
+    await scanDir(vaultBasePath);
+    return results;
+  }
 }
 
 class TelegramSyncSettingTab extends PluginSettingTab {
@@ -366,88 +361,24 @@ class TelegramSyncSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
 
-    containerEl.createEl('h2', { text: 'Синхронизация с Telegram' });
+    containerEl.createEl('h2', { text: 'Синхронизация с Telegram (Cloud Sync)' });
 
     new Setting(containerEl)
-      .setName('Режим подключения')
-      .setDesc('Выберите: Общий/Облачный бот (без настроек своего бота) или Свой бот (созданный через @BotFather)')
-      .addDropdown(dropdown => dropdown
-        .addOption('shared', 'Общий/Облачный бот (Cloud Sync) ⭐')
-        .addOption('private', 'Свой личный бот (Private Bot)')
-        .setValue(this.plugin.settings.mode || 'shared')
-        .onChange(async (value: 'shared' | 'private') => {
-          this.plugin.settings.mode = value;
+      .setName('Код синхронизации (Sync Code)')
+      .setDesc('Введите код, полученный от бота после команды /start')
+      .addText(text => text
+        .setPlaceholder('Введите ваш код синхронизации')
+        .setValue(this.plugin.settings.syncCode || '')
+        .onChange(async (value) => {
+          this.plugin.settings.syncCode = value.trim();
           await this.plugin.saveSettings();
-          this.display(); // Перерисовываем вкладку для скрытия/вывода соответствующих полей
-          
           this.plugin.stopPolling();
           this.plugin.startPolling();
         }));
 
-    if (this.plugin.settings.mode === 'shared') {
-      new Setting(containerEl)
-        .setName('Код синхронизации (Sync Code)')
-        .setDesc('Введите числовой код, полученный от бота при старте (например, 123456789)')
-        .addText(text => text
-          .setPlaceholder('Введите ваш код синхронизации')
-          .setValue(this.plugin.settings.syncCode || '')
-          .onChange(async (value) => {
-            this.plugin.settings.syncCode = value.trim();
-            await this.plugin.saveSettings();
-          }));
-
-      new Setting(containerEl)
-        .setName('Сервер синхронизации')
-        .setDesc('Адрес облачного сервера интеграции')
-        .addText(text => text
-          .setPlaceholder('https://...')
-          .setValue(this.plugin.settings.syncServerUrl || '${currentUrl}')
-          .onChange(async (value) => {
-            this.plugin.settings.syncServerUrl = value.trim();
-            await this.plugin.saveSettings();
-          }));
-    } else {
-      new Setting(containerEl)
-        .setName('Bot Token')
-        .setDesc('Введите HTTP API токен вашего личного бота (полученный от @BotFather)')
-        .addText(text => text
-          .setPlaceholder('123456789:ABCdefGh...')
-          .setValue(this.plugin.settings.botToken || '')
-          .onChange(async (value) => {
-            this.plugin.settings.botToken = value.trim();
-            await this.plugin.saveSettings();
-          }));
-
-      new Setting(containerEl)
-        .setName('Проверить подключение приватного бота')
-        .setDesc('Проверка валидности указанного токена личного бота.')
-        .addButton(btn => btn
-          .setButtonText('Проверить')
-          .onClick(async () => {
-            const token = this.plugin.settings.botToken;
-            if (!token) {
-              new Notice('Сначала введите Bot Token!');
-              return;
-            }
-            new Notice('Подключаемся к серверам Telegram...');
-            try {
-              // @ts-ignore
-              const { requestUrl } = require('obsidian');
-              const res = await requestUrl({ url: \`https://api.telegram.org/bot\${token}/getMe\`, method: 'GET' });
-              if (res.status === 200 && res.json?.ok) {
-                new Notice(\`Успешно подключено к боту: @\${res.json.result.username}\`);
-              } else {
-                new Notice('Ошибка подключения. Проверьте токен.');
-              }
-            } catch (err: any) {
-              new Notice(\`Ошибка подключения: \${err.message || err}\`);
-            }
-          }));
-    }
-
     new Setting(containerEl)
       .setName('Default Folder Path')
-      .setDesc('Путь к папке в сейфе Obsidian для сохранения .md заметок.')
+      .setDesc('Путь к папке для сохранения .md заметок.')
       .addText(text => text
         .setPlaceholder('Telegram Notes')
         .setValue(this.plugin.settings.defaultFolderPath)
@@ -458,7 +389,7 @@ class TelegramSyncSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('Media Path')
-      .setDesc('Папка внутри вашего хранилища для сохранения медиафайлов и оригинальных вложений.')
+      .setDesc('Папка для сохранения вложений.')
       .addText(text => text
         .setPlaceholder('Telegram Notes/Media')
         .setValue(this.plugin.settings.mediaPath)
@@ -471,13 +402,68 @@ class TelegramSyncSettingTab extends PluginSettingTab {
 `;
 }
 
-export function generatePureMainJs(settings: PluginSettings, currentUrl: string): string {
-  const defaultFolder = settings.defaultFolderPath || 'Telegram Notes';
-  const mediaFolder = settings.mediaPath || 'Telegram Notes/Media';
+export function generatePureMainJs(currentUrl: string): string {
+  const defaultFolder = 'Telegram Notes';
+  const mediaFolder = 'Telegram Notes/Media';
 
   return `const { Plugin, PluginSettingTab, Setting, Notice, requestUrl } = require('obsidian');
 const fs = require('fs/promises');
 const path = require('path');
+
+const SYNC_SERVER_URL = '${currentUrl}';
+
+// Преобразует entities Telegram → Markdown
+function formatTelegramText(text, entities) {
+  if (!entities || entities.length === 0) return text || '';
+
+  const events = [];
+  for (const e of entities) {
+    events.push({ pos: e.offset, type: e.type, open: true, meta: e.type === 'text_link' ? e.url : (e.type === 'pre' ? (e.language || '') : '') });
+    events.push({ pos: e.offset + e.length, type: e.type, open: false, meta: e.type === 'text_link' ? e.url : '' });
+  }
+  events.sort((a, b) => a.pos - b.pos || (a.open ? 1 : -1) - (b.open ? 1 : -1));
+
+  let result = '';
+  let last = 0;
+  const stack = [];
+
+  for (const ev of events) {
+    if (ev.pos > last) result += text.substring(last, ev.pos);
+
+    if (ev.open) {
+      switch (ev.type) {
+        case 'bold': result += '**'; break;
+        case 'italic': result += '*'; break;
+        case 'code': result += '\`'; break;
+        case 'strikethrough': result += '~~'; break;
+        case 'underline': result += '<u>'; break;
+        case 'spoiler': result += '||'; break;
+        case 'pre': result += '\`\`\`' + ev.meta + '\\n'; break;
+        case 'text_link': result += '['; break;
+      }
+      stack.push(ev);
+    } else {
+      const prev = stack.pop();
+      if (prev) {
+        switch (ev.type) {
+          case 'bold': result += '**'; break;
+          case 'italic': result += '*'; break;
+          case 'code': result += '\`'; break;
+          case 'strikethrough': result += '~~'; break;
+          case 'underline': result += '</u>'; break;
+          case 'spoiler': result += '||'; break;
+          case 'pre': result += '\\n\`\`\`'; break;
+          case 'text_link': result += '](' + (ev.meta || prev.meta || '') + ')'; break;
+        }
+      }
+    }
+
+    last = ev.pos;
+  }
+
+  if (last < text.length) result += text.substring(last);
+  return result;
+}
 
 module.exports = class TelegramSyncPlugin extends Plugin {
   async onload() {
@@ -497,10 +483,7 @@ module.exports = class TelegramSyncPlugin extends Plugin {
 
   async loadSettings() {
     this.settings = Object.assign({
-      mode: 'shared',
-      botToken: '',
       syncCode: '',
-      syncServerUrl: '${currentUrl}',
       defaultFolderPath: '${defaultFolder}',
       mediaPath: '${mediaFolder}',
       processedMessageIds: [],
@@ -517,20 +500,11 @@ module.exports = class TelegramSyncPlugin extends Plugin {
     if (this.isPolling) return;
     this.isPolling = true;
 
-    if (this.settings.mode === 'private') {
-      if (this.settings.botToken) {
-        this.pollPrivate();
-      } else {
-        new Notice('Telegram Sync: Пожалуйста, настройте Bot Token в настройках!');
-        this.isPolling = false;
-      }
+    if (this.settings.syncCode) {
+      this.pollShared();
     } else {
-      if (this.settings.syncCode) {
-        this.pollShared();
-      } else {
-        new Notice('Telegram Sync: Пожалуйста, настройте Код синхронизации в настройках!');
-        this.isPolling = false;
-      }
+      new Notice('Telegram Sync: Пожалуйста, настройте Код синхронизации!');
+      this.isPolling = false;
     }
   }
 
@@ -538,59 +512,61 @@ module.exports = class TelegramSyncPlugin extends Plugin {
     this.isPolling = false;
   }
 
-  async pollPrivate() {
-    console.log('Telegram Sync: Запущен поллинг (Private Bot)');
-    while (this.isPolling && this.settings.mode === 'private') {
-      if (!this.settings.botToken) {
-        this.stopPolling();
-        break;
-      }
-      try {
-        const url = \`https://api.telegram.org/bot\${this.settings.botToken}/getUpdates?offset=\${(this.settings.lastUpdateId || 0) + 1}&timeout=30\`;
-        const response = await requestUrl({ url, method: 'GET' });
-        
-        if (response.status === 200 && response.json && response.json.ok) {
-          const updates = response.json.result;
-          for (const update of updates) {
-            this.settings.lastUpdateId = Math.max(this.settings.lastUpdateId || 0, update.update_id);
-            if (update.message) {
-              await this.handleTelegramMessage(update.message);
-            }
-          }
-          if (updates.length > 0) {
-            await this.saveSettings();
-          }
-        }
-      } catch (err) {
-        console.error('Telegram Sync Polling Error (Private):', err);
-        await new Promise(resolve => setTimeout(resolve, 8000));
-      }
-      await new Promise(resolve => setTimeout(resolve, 1500));
-    }
-  }
-
   async pollShared() {
-    console.log('Telegram Sync: Запущен поллинг общего бота с сервера:', this.settings.syncServerUrl);
-    while (this.isPolling && this.settings.mode === 'shared') {
+    console.log('Telegram Sync: Запущен поллинг общего бота');
+    while (this.isPolling) {
       if (!this.settings.syncCode) {
         this.stopPolling();
         break;
       }
       try {
-        const url = \`\${this.settings.syncServerUrl}/api/updates?syncCode=\${this.settings.syncCode}\`;
+        const url = \`\${SYNC_SERVER_URL}/api/updates?syncCode=\${this.settings.syncCode}\`;
         const response = await requestUrl({ url, method: 'GET' });
         
         if (response.status === 200 && response.json && response.json.ok) {
           const updates = response.json.result;
+          const confirmedIds = [];
           for (const update of updates) {
             this.settings.lastUpdateId = Math.max(this.settings.lastUpdateId || 0, update.update_id);
             if (update.message) {
-              await this.handleTelegramMessage(update.message);
+              const ok = await this.handleTelegramMessage(update.message);
+              if (ok) confirmedIds.push(update.update_id);
             }
           }
           if (updates.length > 0) {
             await this.saveSettings();
           }
+          if (confirmedIds.length > 0) {
+            try {
+              await requestUrl({
+                url: \`\${SYNC_SERVER_URL}/api/confirm\`,
+                method: 'POST',
+                body: JSON.stringify({ syncCode: this.settings.syncCode, update_ids: confirmedIds }),
+                contentType: 'application/json',
+              });
+            } catch (e) {
+              console.error('Telegram Sync: Ошибка подтверждения:', e);
+            }
+          }
+        }
+
+        // Поисковый поллинг
+        try {
+          const searchUrl = \`\${SYNC_SERVER_URL}/api/search?syncCode=\${this.settings.syncCode}\`;
+          const searchRes = await requestUrl({ url: searchUrl, method: 'GET' });
+          if (searchRes.status === 200 && searchRes.json?.ok && searchRes.json.query) {
+            const query = searchRes.json.query;
+            console.log(\`Telegram Sync: Поиск «\${query}»\`);
+            const searchResults = await this.searchNotes(query);
+            await requestUrl({
+              url: \`\${SYNC_SERVER_URL}/api/search-results\`,
+              method: 'POST',
+              body: JSON.stringify({ syncCode: this.settings.syncCode, query, results: searchResults }),
+              contentType: 'application/json',
+            });
+          }
+        } catch (e) {
+          console.error('Telegram Sync: Ошибка поиска:', e);
         }
       } catch (err) {
         console.error('Telegram Sync Polling Error (Shared):', err);
@@ -600,31 +576,11 @@ module.exports = class TelegramSyncPlugin extends Plugin {
     }
   }
 
-  async sendTelegramMessage(chatId, text) {
-    if (this.settings.mode === 'shared') return; // Общий бот шлет подтверждения из бэкенда
-    if (!this.settings.botToken) return;
-    try {
-      const url = \`https://api.telegram.org/bot\${this.settings.botToken}/sendMessage\`;
-      await requestUrl({
-        url,
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: chatId,
-          text: text,
-          parse_mode: 'HTML'
-        })
-      });
-    } catch (err) {
-      console.error('Telegram Sync: Ошибка при отправке ответа в Telegram:', err);
-    }
-  }
-
   async handleTelegramMessage(msg) {
-    if (!msg.message_id) return;
+    if (!msg.message_id) return false;
     
     if (this.processedSet.has(msg.message_id)) {
-      return;
+      return false;
     }
 
     try {
@@ -633,48 +589,9 @@ module.exports = class TelegramSyncPlugin extends Plugin {
       const formattedDateForName = dateObj.toISOString().slice(0, 19).replace('T', ' ').replace(/:/g, '-');
       const formattedDateForContent = dateObj.toLocaleString();
 
-      let text = msg.text || msg.caption || '';
+      let text = formatTelegramText(msg.text || msg.caption || '', msg.entities || msg.caption_entities);
       let downloadedFileName = '';
 
-      // Системные команды только для приватного режима
-      if (this.settings.mode === 'private' && text && text.startsWith('/')) {
-        const command = text.split(' ')[0].toLowerCase();
-        
-        if (command === '/start' || command === '/help') {
-          const startMsg = \`👋 <b>Привет! Я твой Telegram-Obsidian ассистент!</b>
-
-Отправь мне любой текст, мысль, ссылку, картинку или документ, и я мгновенно сохраню это в твой локальный архив Obsidian.
-
-<b>Доступные действия:</b>
-• Просто отправь текст — создам .md заметку с YAML метаданными.
-• Прикрепи картинку/фото — скачаю в Media и встрою в заметку.
-• Отправь документ или файл — бережно сохраню в твой сейф.
-• Отправь команду /status — чтобы проверить состояние подключения.
-
-<i>Плагин запущен и ожидает твоих заметок!</i>\`;
-          
-          await this.sendTelegramMessage(msg.chat.id, startMsg);
-          this.processedSet.add(msg.message_id);
-          await this.saveSettings();
-          return;
-        }
-
-        if (command === '/status') {
-          const statusMsg = \`📡 <b>Telegram Sync: Статус активен!</b>
-
-• Папка заметок: <code>\${this.settings.defaultFolderPath}</code>
-• Папка вложений: <code>\${this.settings.mediaPath}</code>
-• Сообщений сохранено: <code>\${this.processedSet.size}</code> (за сессию)
-• Синхронизация: <b>Работает (Private Polling)</b>\`;
-
-          await this.sendTelegramMessage(msg.chat.id, statusMsg);
-          this.processedSet.add(msg.message_id);
-          await this.saveSettings();
-          return;
-        }
-      }
-
-      // Скачивание фото
       if (msg.photo && msg.photo.length > 0) {
         const photo = msg.photo[msg.photo.length - 1];
         const fileId = photo.file_id;
@@ -682,9 +599,7 @@ module.exports = class TelegramSyncPlugin extends Plugin {
         if (localPath) {
           downloadedFileName = path.basename(localPath);
         }
-      } 
-      // Скачивание файлов
-      else if (msg.document) {
+      } else if (msg.document) {
         const fileId = msg.document.file_id;
         const localPath = await this.downloadTelegramFile(fileId, 'document', msg.document.file_name);
         if (localPath) {
@@ -694,6 +609,11 @@ module.exports = class TelegramSyncPlugin extends Plugin {
 
       if (!text && downloadedFileName) {
         text = 'Получено вложение: ' + downloadedFileName;
+      }
+
+      if (text.startsWith('/')) {
+        console.log('Telegram Sync: Пропущена команда:', text.split(' ')[0]);
+        return false;
       }
 
       const sanitizedText = text.replace(/[\\\\/:*?"<>|\\n\\r]/g, ' ').substring(0, 30).trim();
@@ -714,45 +634,27 @@ date: \${formattedDateForContent}
 \${text}
 
 \${downloadedFileName ? \`## Вложения
-![[\s\${downloadedFileName}]]\` : ''}
+![[\${downloadedFileName}]]\` : ''}
 \`;
 
       const fullNotePath = path.join(defaultFolderAbsolute, noteFileName);
       await fs.writeFile(fullNotePath, noteContent, 'utf-8');
 
-      if (this.settings.mode === 'private') {
-        const confirmationMsg = \`✅ <b>Заметка успешно создана в Obsidian!</b>
-• Файл: <code>\s\${noteFileName}</code>
-• Папка: <code>\s\${this.settings.defaultFolderPath}</code>\`;
-        await this.sendTelegramMessage(msg.chat.id, confirmationMsg);
-      }
-
       this.processedSet.add(msg.message_id);
       await this.saveSettings();
 
-      new Notice(\`Telegram Sync: Сообщение сохранено: \s\${noteFileName}\`);
+      new Notice(\`Telegram Sync: Сообщение сохранено: \${noteFileName}\`);
+      return true;
     } catch (err) {
       console.error('Ошибка при генерации заметки из Telegram:', err);
+      return false;
     }
   }
 
   async downloadTelegramFile(fileId, type, originalName) {
     try {
-      let fileDataRes;
-      if (this.settings.mode === 'shared') {
-        const downloadUrl = \`\s\${this.settings.syncServerUrl}/api/file?file_id=\${fileId}&syncCode=\s\${this.settings.syncCode}\`;
-        fileDataRes = await requestUrl({ url: downloadUrl, method: 'GET', contentType: 'application/octet-stream' });
-      } else {
-        const getFileUrl = \`https://api.telegram.org/bot\${this.settings.botToken}/getFile?file_id=\${fileId}\`;
-        const fileInfoRes = await requestUrl({ url: getFileUrl, method: 'GET' });
-        if (fileInfoRes.status !== 200 || !fileInfoRes.json?.ok) return null;
-
-        const filePathOnTelegram = fileInfoRes.json.result.file_path;
-        if (!filePathOnTelegram) return null;
-
-        const downloadUrl = \`https://api.telegram.org/file/bot\${this.settings.botToken}/\s\${filePathOnTelegram}\`;
-        fileDataRes = await requestUrl({ url: downloadUrl, method: 'GET', contentType: 'application/octet-stream' });
-      }
+      const downloadUrl = \`\${SYNC_SERVER_URL}/api/file?file_id=\${fileId}&syncCode=\${this.settings.syncCode}\`;
+      const fileDataRes = await requestUrl({ url: downloadUrl, method: 'GET', contentType: 'application/octet-stream' });
       
       const vaultBasePath = this.app.vault.adapter.getBasePath();
       const mediaAbsoluteFolder = path.join(vaultBasePath, this.settings.mediaPath);
@@ -775,6 +677,32 @@ date: \${formattedDateForContent}
       return null;
     }
   }
+
+  async searchNotes(query) {
+    const vaultBasePath = this.app.vault.adapter.getBasePath();
+    const results = [];
+
+    const scanDir = async (dir) => {
+      const entries = await fs.readdir(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isDirectory() && !entry.name.startsWith('.')) {
+          await scanDir(fullPath);
+        } else if (entry.name.endsWith('.md')) {
+          const content = await fs.readFile(fullPath, 'utf-8');
+          if (content.toLowerCase().includes(query.toLowerCase())) {
+            const relativePath = path.relative(vaultBasePath, fullPath);
+            const lines = content.split('\\n');
+            const matchLine = lines.find(l => l.toLowerCase().includes(query.toLowerCase())) || '';
+            results.push({ filename: relativePath, preview: matchLine.trim().substring(0, 100) });
+          }
+        }
+      }
+    };
+
+    await scanDir(vaultBasePath);
+    return results;
+  }
 }
 
 class TelegramSyncSettingTab extends PluginSettingTab {
@@ -786,86 +714,25 @@ class TelegramSyncSettingTab extends PluginSettingTab {
   display() {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl('h2', { text: 'Синхронизация с Telegram' });
+
+    containerEl.createEl('h2', { text: 'Синхронизация с Telegram (Cloud Sync)' });
 
     new Setting(containerEl)
-      .setName('Режим подключения')
-      .setDesc('Выберите: Общий/Облачный бот (без настроек своего бота) или Свой бот (созданный через @BotFather)')
-      .addDropdown(dropdown => dropdown
-        .addOption('shared', 'Общий/Облачный бот (Cloud Sync) ⭐')
-        .addOption('private', 'Свой личный бот (Private Bot)')
-        .setValue(this.plugin.settings.mode || 'shared')
+      .setName('Код синхронизации (Sync Code)')
+      .setDesc('Введите код, полученный от бота после команды /start')
+      .addText(text => text
+        .setPlaceholder('Введите ваш код синхронизации')
+        .setValue(this.plugin.settings.syncCode || '')
         .onChange(async (value) => {
-          this.plugin.settings.mode = value;
+          this.plugin.settings.syncCode = value.trim();
           await this.plugin.saveSettings();
-          this.display();
-          
           this.plugin.stopPolling();
           this.plugin.startPolling();
         }));
 
-    if (this.plugin.settings.mode === 'shared') {
-      new Setting(containerEl)
-        .setName('Код синхронизации (Sync Code)')
-        .setDesc('Введите числовой код, полученный от бота при старте (например, 123456789)')
-        .addText(text => text
-          .setPlaceholder('Введите ваш код синхронизации')
-          .setValue(this.plugin.settings.syncCode || '')
-          .onChange(async (value) => {
-            this.plugin.settings.syncCode = value.trim();
-            await this.plugin.saveSettings();
-          }));
-
-      new Setting(containerEl)
-        .setName('Сервер синхронизации')
-        .setDesc('Адрес облачного сервера интеграции')
-        .addText(text => text
-          .setPlaceholder('https://...')
-          .setValue(this.plugin.settings.syncServerUrl || '${currentUrl}')
-          .onChange(async (value) => {
-            this.plugin.settings.syncServerUrl = value.trim();
-            await this.plugin.saveSettings();
-          }));
-    } else {
-      new Setting(containerEl)
-        .setName('Bot Token')
-        .setDesc('Введите HTTP API токен вашего личного бота')
-        .addText(text => text
-          .setPlaceholder('123456789:ABCdefGh...')
-          .setValue(this.plugin.settings.botToken)
-          .onChange(async (value) => {
-            this.plugin.settings.botToken = value.trim();
-            await this.plugin.saveSettings();
-          }));
-
-      new Setting(containerEl)
-        .setName('Проверить подключение приватного бота')
-        .addButton(btn => btn
-          .setButtonText('Проверить')
-          .onClick(async () => {
-            const token = this.plugin.settings.botToken;
-            if (!token) {
-              new Notice('Сначала введите Bot Token!');
-              return;
-            }
-            new Notice('Подключаемся к серверам Telegram...');
-            try {
-              const url = \`https://api.telegram.org/bot\${token}/getMe\`;
-              const res = await requestUrl({ url, method: 'GET' });
-              if (res.status === 200 && res.json?.ok) {
-                new Notice(\`Успешно подключено к боту: @\${res.json.result.username}\`);
-              } else {
-                new Notice('Ошибка подключения. Проверьте токен.');
-              }
-            } catch (err) {
-              new Notice(\`Ошибка подключения: \${err.message || err}\`);
-            }
-          }));
-    }
-
     new Setting(containerEl)
       .setName('Default Folder Path')
-      .setDesc('Имя или путь папки в вашем хранилище для сохранения .md файлов заметок.')
+      .setDesc('Путь к папке для сохранения .md заметок.')
       .addText(text => text
         .setPlaceholder('Telegram Notes')
         .setValue(this.plugin.settings.defaultFolderPath)
@@ -876,7 +743,7 @@ class TelegramSyncSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('Media Path')
-      .setDesc('Папка внутри вашего хранилища для сохранения вложенных картинок и файлов.')
+      .setDesc('Папка для сохранения вложений.')
       .addText(text => text
         .setPlaceholder('Telegram Notes/Media')
         .setValue(this.plugin.settings.mediaPath)
@@ -925,9 +792,7 @@ export function generatePackageJson(): string {
       '@rollup/plugin-node-resolve': '^13.3.0',
       '@rollup/plugin-typescript': '^8.3.0'
     },
-    dependencies: {
-      'node-telegram-bot-api': '^0.61.0'
-    }
+    dependencies: {}
   }, null, 2);
 }
 
@@ -940,51 +805,42 @@ export function generateStylesCss(): string {
 `;
 }
 
-export function generateReadme(settings: PluginSettings, currentUrl: string): string {
-  const defaultFolder = settings.defaultFolderPath || 'Telegram Notes';
-  const mediaFolder = settings.mediaPath || 'Telegram Notes/Media';
-
+export function generateReadme(currentUrl: string): string {
   return `# Инструкция по установке и настройке плагина Telegram Sync
 
 Этот плагин предназначен для переноса важных сообщений и фотографий из Telegram прямо в локальное хранилище Obsidian.
 
-Поддерживается 2 классных режима:
-1. **Режим общего/облачного бота (Cloud Sync) ⭐** — вы и ваши друзья пишите в ОДИН общий Telegram бот, но сообщения сохраняются только на вашем локальном компьютере в Obsidian. Не требует создания собственного бота!
-2. **Приватный режим (Private Bot)** — вы запускаете своего личного бота у @BotFather.
+Работает в режиме **Cloud Sync** — вы и ваши друзья пишете в ОДИН общий Telegram бот, но сообщения сохраняются только на вашем локальном компьютере в Obsidian. Не требует создания собственного бота!
 
 ---
 
-## 🛠 Вариант А: Быстрый запуск в Общем режиме (Cloud Sync)
+## 🛠 Быстрый запуск
 
 1. Откройте Telegram-бота, настроенного в этой системе.
 2. Отправьте ему команду \`/start\`.
 3. Бот мгновенно выдаст ваш персональный **Код синхронизации** (например, \`123456789\`).
-4. В Obsidian в настройках плагина переключите **Режим подключения** на **"Общий/Облачный бот (Cloud Sync)"**.
-5. Укажите свой **Код синхронизации** и адрес сервера: \`${currentUrl}\`.
-6. Готово! Всё отправленное боту мгновенно перенесётся в ваш Obsidian. При этом чужие сообщения вы никогда не получите — полная приватность!
+4. В Obsidian в настройках плагина укажите **Код синхронизации** (адрес сервера заполнен автоматически — \`${currentUrl}\`).
+5. Готово! Всё отправленное боту мгновенно перенесётся в ваш Obsidian. При этом чужие сообщения вы никогда не получите — полная приватность!
 
 ---
 
-## 🛠 Вариант Б: Приватный режим (Ваш собственный бот)
+## 📦 Установка из ZIP
 
-1. Найдите бота **@BotFather** в Telegram.
-2. Отправьте команду \`/newbot\`.
-3. Задайте имя бота и получить свой **Bot Token** (\`123456789:ABCdef...\`).
-4. Нажмите **Запустить** (\`/start\`) в вашем свежем боте.
-5. Инсталлируйте плагин, выберите в настройках **"Свой личный бот"** и вставьте скопированный токен.
+Этот архив содержит всё необходимое для установки плагина:
 
----
+1. Убедитесь, что в Obsidian в разделе **Настройки → Community plugins** отключен Безопасный режим.
+2. Откройте папку вашего хранилища (Vault) на компьютере.
+3. Перейдите в \`.obsidian/plugins/\` (если папки \`plugins\` нет — создайте её).
+4. Создайте папку \`obsidian-telegram-sync\`.
+5. Распакуйте содержимое этого ZIP-архива в \`.obsidian/plugins/obsidian-telegram-sync/\`.
+6. Перезапустите Obsidian.
+7. Включите плагин **Telegram Sync Pro** в списке установленных плагинов.
 
-## 📥 Установка плагина в Obsidian (Ручной способ)
+## 📥 Установка вручную (с сайта)
 
-1. Убедитесь, что в Obsidian в разделе **Сторонние плагины** (Community plugins) отключен Безопасный режим.
-2. Перейдите в папку вашего локального сейфа на компьютере (Vault).
-3. Перейдите по скрытому пути \`.obsidian/plugins/\` (если папки \`plugins\` нет — создайте).
-4. Создайте в ней новую папку \`obsidian-telegram-sync\`.
-5. Поместите туда следующие три сгенерированных файла:
-   - \`main.js\` (содержимое вкладки "main.js")
-   - \`manifest.json\` (содержимое вкладки "manifest.json")
-   - \`styles.css\` (содержимое вкладки "styles.css")
-6. Перезапустите Obsidian (или обновите список плагинов в настройках), затем включите тумблер напротив **Telegram Sync**.
+1. Откройте в браузере: \`${currentUrl}\`
+2. Нажмите **Download ZIP** или скопируйте содержимое вкладок \`main.js\`, \`manifest.json\`, \`styles.css\`.
+3. Поместите файлы в \`.obsidian/plugins/obsidian-telegram-sync/\`.
+4. Включите плагин в **Настройки → Community plugins**.
 `;
 }
