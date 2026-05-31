@@ -150,19 +150,13 @@ async function sendWithKeyboard(chatId: string | number, text: string) {
   }
 }
 
-function getServerUrl(): string {
-  return process.env.SERVER_URL || `http://localhost:${process.env.PORT || '3000'}`;
-}
-
 async function sendPluginZip(chatId: number) {
-  const serverUrl = getServerUrl();
-
   try {
     const zip = new JSZip();
-    zip.file('main.js', generatePureMainJs(serverUrl));
+    zip.file('main.js', generatePureMainJs());
     zip.file('manifest.json', generateManifestJson());
     zip.file('styles.css', generateStylesCss());
-    zip.file('README.md', generateReadme(serverUrl));
+    zip.file('README.md', generateReadme());
 
     const zipBuffer = await zip.generateAsync({ type: 'nodebuffer' });
 
@@ -179,7 +173,7 @@ async function sendPluginZip(chatId: number) {
     if (!res.ok) {
       const errBody = await res.text();
       console.error(`sendPluginZip error: ${res.status} ${errBody}`);
-      await sendWithKeyboard(chatId, `❌ Не удалось отправить ZIP. Открой сайт ${serverUrl} и нажми Download ZIP.`);
+      await sendWithKeyboard(chatId, `❌ Не удалось отправить ZIP.`);
     }
 
     await sendWithKeyboard(chatId, `📥 <b>Вот архив с плагином.</b>
@@ -192,7 +186,7 @@ async function sendPluginZip(chatId: number) {
 Подробная инструкция — внутри архива (README.md).`);
   } catch (err) {
     console.error('sendPluginZip error:', err);
-    await sendWithKeyboard(chatId, `❌ Ошибка при создании ZIP. Открой сайт ${serverUrl} и нажми Download ZIP.`);
+    await sendWithKeyboard(chatId, `❌ Ошибка при создании ZIP.`);
   }
 }
 

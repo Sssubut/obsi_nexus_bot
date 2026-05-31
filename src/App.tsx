@@ -25,14 +25,12 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'main' | 'purejs' | 'manifest' | 'package' | 'styles' | 'readme'>('purejs');
   const [copiedFile, setCopiedFile] = useState<string | null>(null);
 
-  const currentUrl = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
-
-  const mainTsCode = useMemo(() => generateMainTs(currentUrl), [currentUrl]);
-  const pureJsCode = useMemo(() => generatePureMainJs(currentUrl), [currentUrl]);
+  const mainTsCode = useMemo(() => generateMainTs(), []);
+  const pureJsCode = useMemo(() => generatePureMainJs(), []);
   const manifestJsonCode = useMemo(() => generateManifestJson(), []);
   const packageJsonCode = useMemo(() => generatePackageJson(), []);
   const stylesCssCode = useMemo(() => generateStylesCss(), []);
-  const readmeMarkdown = useMemo(() => generateReadme(currentUrl), [currentUrl]);
+  const readmeMarkdown = useMemo(() => generateReadme(), []);
 
   const copyToClipboard = (text: string, label: string) => {
     navigator.clipboard.writeText(text);
@@ -52,10 +50,10 @@ export default function App() {
 
   const downloadAllPlugin = async () => {
     const zip = new JSZip();
-    zip.file('main.js', generatePureMainJs(currentUrl));
+    zip.file('main.js', generatePureMainJs());
     zip.file('manifest.json', generateManifestJson());
     zip.file('styles.css', generateStylesCss());
-    zip.file('README.md', generateReadme(currentUrl));
+    zip.file('README.md', generateReadme());
 
     const blob = await zip.generateAsync({ type: 'blob' });
     const element = document.createElement("a");

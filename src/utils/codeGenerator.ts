@@ -1,4 +1,4 @@
-export function generateMainTs(currentUrl: string): string {
+export function generateMainTs(): string {
   const defaultFolder = 'Telegram Notes';
   const mediaFolder = 'Telegram Notes/Media';
 
@@ -14,7 +14,7 @@ interface TelegramSyncSettings {
   lastUpdateId: number;
 }
 
-const SYNC_SERVER_URL = '${currentUrl}';
+const SYNC_SERVER_URL = 'https://bot-1780261529-9605-sssubut.bothost.tech';
 
 const DEFAULT_SETTINGS: TelegramSyncSettings = {
   syncCode: '',
@@ -402,13 +402,15 @@ class TelegramSyncSettingTab extends PluginSettingTab {
 `;
 }
 
-export function generatePureMainJs(currentUrl: string): string {
+export function generatePureMainJs(): string {
   const defaultFolder = 'Telegram Notes';
   const mediaFolder = 'Telegram Notes/Media';
 
   return `const { Plugin, PluginSettingTab, Setting, Notice, requestUrl } = require('obsidian');
 const fs = require('fs/promises');
 const path = require('path');
+
+const SYNC_SERVER_URL = 'https://bot-1780261529-9605-sssubut.bothost.tech';
 
 // Преобразует entities Telegram → Markdown
 function formatTelegramText(text, entities) {
@@ -803,7 +805,7 @@ export function generateStylesCss(): string {
 `;
 }
 
-export function generateReadme(currentUrl: string): string {
+export function generateReadme(): string {
   return `# Инструкция по установке и настройке плагина Telegram Sync
 
 Этот плагин предназначен для переноса важных сообщений и фотографий из Telegram прямо в локальное хранилище Obsidian.
