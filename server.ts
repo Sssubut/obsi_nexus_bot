@@ -238,6 +238,23 @@ async function startTelegramPolling() {
       }),
     });
   } catch { /* не критично */ }
+
+  // Очистка накопившейся очереди старых сообщений перед запуском
+  try {
+    console.log('Очистка накопившейся очереди старых сообщений...');
+    const clearRes = await fetch(`${TELEGRAM_API_BASE}/bot${BOT_TOKEN}/getUpdates?offset=-1&timeout=1`);
+    if (clearRes.ok) {
+      const data = await clearRes.json() as any;
+      if (data.ok && data.result && data.result.length > 0) {
+        lastUpdateId = Math.max(lastUpdateId, data.result[0].update_id);
+        scheduleSave();
+      }
+    }
+    await fetch(`${TELEGRAM_API_BASE}/bot${BOT_TOKEN}/getUpdates?offset=${lastUpdateId + 1}&timeout=1`);
+    console.log('Очередь успешно очищена! Бот готов мгновенно отвечать.');
+  } catch (err) {
+    console.error('Ошибка при очистке очереди:', err);
+  }
   
   while (true) {
     try {
