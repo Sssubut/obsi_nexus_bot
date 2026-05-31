@@ -128,7 +128,6 @@ const COMMAND_KEYBOARD = {
   input_field_placeholder: 'Напиши сообщение или нажми кнопку...'
 };
 
-// Помощник для отправки сообщений обратно в Telegram с клавиатурой
 async function sendWithKeyboard(chatId: string | number, text: string) {
   try {
     const res = await fetch(`${TELEGRAM_API_BASE}/bot${BOT_TOKEN}/sendMessage`, {
@@ -176,21 +175,13 @@ async function sendPluginZip(chatId: number) {
       await sendWithKeyboard(chatId, `❌ Не удалось отправить ZIP.`);
     }
 
-    await sendWithKeyboard(chatId, `📥 <b>Вот архив с плагином.</b>
-
-Распакуй его в папку:
-<code>.obsidian/plugins/obsidian-telegram-sync/</code>
-
-Поток включи плагин в <b>Настройки → Community plugins</b>.
-
-Подробная инструкция — внутри архива (README.md).`);
+    await sendWithKeyboard(chatId, `📥 <b>Вот архив с плагином.</b>\n\nРаспакуй его в папку:\n<code>.obsidian/plugins/obsidian-telegram-sync/</code>\n\nПоток включи плагин в <b>Настройки → Community plugins</b>.\n\nПодробная инструкция — внутри архива (README.md).`);
   } catch (err) {
     console.error('sendPluginZip error:', err);
     await sendWithKeyboard(chatId, `❌ Ошибка при создании ZIP.`);
   }
 }
 
-// Генерирует описание для нетекстовых сообщений (стикеры, локации и т.д.)
 function describeMessage(msg: any): string {
   if (msg.text) return msg.text;
   if (msg.caption) return msg.caption;
@@ -210,11 +201,9 @@ function describeMessage(msg: any): string {
   return '💬 Сообщение';
 }
 
-// Вечный цикл поллинга для общего бота
 async function startTelegramPolling() {
   console.log(`Starting Telegram background polling with token: ${BOT_TOKEN.substring(0, 10)}... (Base URL: ${TELEGRAM_API_BASE})`);
 
-  // Регистрируем команды в Telegram (показываются в меню)
   try {
     await fetch(`${TELEGRAM_API_BASE}/bot${BOT_TOKEN}/setMyCommands`, {
       method: "POST",
@@ -280,59 +269,23 @@ async function startTelegramPolling() {
               if (isStart) {
                 onboardedChats.add(chatId);
                 scheduleSave();
-                const greeting = `👋 <b>Привет! Я твой Telegram-Obsidian ассистент!</b>
-                
-<b>Cloud Sync активен</b>
-
-Твой <b>Код синхронизации</b>:
-<code>${token}</code>
-
-<b>Как настроить плагин в Obsidian:</b>
-1. Нажми «📥 Плагин» чтобы скачать ZIP с плагином и README
-2. Или открой сайт: <code>http://localhost:3000</code>
-3. Вставь этот код в настройках плагина
-4. Всё! Заметки будут приходить автоматически
-
-Просто отправь мне любое сообщение, картинку или файл — оно появится в Obsidian.`;
+                const greeting = `👋 <b>Привет! Я твой Telegram-Obsidian ассистент!</b>\n\n<b>Cloud Sync активен</b>\n\nТвой <b>Код синхронизации</b>:\n<code>${token}</code>\n\n<b>Как настроить плагин в Obsidian:</b>\n1. Нажми «📥 Плагин» чтобы скачать ZIP с плагином и README\n2. Распакуй его в Obsidian и активируй\n3. Вставь этот код в настройках плагина\n4. Всё! Заметки будут приходить автоматически\n\nПросто отправь мне любое сообщение, картинку или файл — оно появится в Obsidian.`;
                 
                 await sendWithKeyboard(chatId, greeting);
               } else if (isHelp) {
                 onboardedChats.add(chatId);
                 scheduleSave();
-                const helpMessage = `🤖 <b>Telegram Sync — ассистент для Obsidian</b>
-
-<b>Код синхронизации:</b>
-<code>${token}</code>
-
-<b>Как пользоваться:</b>
-• Просто отправь текст, фото или файл — он появится в Obsidian
-• Используй кнопки ниже для управления
-
-<b>Кнопки:</b>
-🔑 Мой код — показать твой Код синхронизации
-📊 Статус — проверить очередь сообщений
-🔄 Новый токен — сбросить токен (старый перестанет работать)
-🔍 Поиск — искать заметки в Obsidian
-📥 Плагин — скачать ZIP с плагином и README
-❓ Помощь — эта справка`;
+                const helpMessage = `🤖 <b>Telegram Sync — ассистент для Obsidian</b>\n\n<b>Код синхронизации:</b>\n<code>${token}</code>\n\n<b>Как пользоваться:</b>\n• Просто отправь текст, фото или файл — он появится в Obsidian\n• Используй кнопки ниже для управления\n\n<b>Кнопки:</b>\n🔑 Мой код — показать твой Код синхронизации\n📊 Статус — проверить очередь сообщений\n🔄 Новый токен — сбросить токен (старый перестанет работать)\n🔍 Поиск — искать заметки в Obsidian\n📥 Плагин — скачать ZIP с плагином и README\n❓ Помощь — эта справка`;
                 
                 await sendWithKeyboard(chatId, helpMessage);
               } else if (isNewToken) {
                 const oldToken = token;
                 const newToken = regenerateToken(chatId);
-                await sendWithKeyboard(chatId, `✅ <b>Твой Код синхронизации обновлён!</b>
-
-Старый: <code>${oldToken}</code>
-Новый: <code>${newToken}</code>
-
-Не забудь обновить код в настройках плагина Obsidian!`);
+                await sendWithKeyboard(chatId, `✅ <b>Твой Код синхронизации обновлён!</b>\n\nСтарый: <code>${oldToken}</code>\nНовый: <code>${newToken}</code>\n\nНе забудь обновить код в настройках плагина Obsidian!`);
               } else if (isStatus) {
                 onboardedChats.add(chatId);
                 scheduleSave();
-                await sendWithKeyboard(chatId, `📡 <b>Статус синхронизации: Активен</b>
-                
-• Код: <code>${token}</code>
-• В очереди: <code>${(userQueues.get(token) || []).length}</code> сообщений`);
+                await sendWithKeyboard(chatId, `📡 <b>Статус синхронизации: Активен</b>\n\n• Код: <code>${token}</code>\n• В очереди: <code>${(userQueues.get(token) || []).length}</code> сообщений`);
               } else if (isCancel) {
                 awaitingSearch.delete(chatId);
                 await sendWithKeyboard(chatId, `❌ Поиск отменён`);
@@ -356,7 +309,6 @@ async function startTelegramPolling() {
               } else if (text && text.startsWith('/')) {
                 console.log(`Telegram Sync: неизвестная команда от ${chatId}: ${text.split(' ')[0]}`);
               } else {
-                // Если пользователь ожидает ввода поискового запроса
                 if (awaitingSearch.has(chatId)) {
                   awaitingSearch.delete(chatId);
                   const query = (message.text || message.caption || '').trim();
@@ -372,7 +324,6 @@ async function startTelegramPolling() {
                     await sendWithKeyboard(chatId, `❌ Поиск отменён (пустой запрос)`);
                   }
                 } else {
-                  // Обычное сообщение — ставим в очередь
                   if (!message.text && !message.caption) {
                     message.text = describeMessage(message);
                   }
@@ -387,15 +338,10 @@ async function startTelegramPolling() {
                     queue.push(update);
                   }
 
-                  // Если пользователь ещё не получал приветствие — показываем код
                   if (!onboardedChats.has(chatId)) {
                     onboardedChats.add(chatId);
                     scheduleSave();
-                    await sendWithKeyboard(chatId, `👋 <b>Привет! Твой Код синхронизации:</b>
-
-<code>${token}</code>
-
-Вставь его в настройках плагина в Obsidian, чтобы заметки приходили автоматически.`);
+                    await sendWithKeyboard(chatId, `👋 <b>Привет! Твой Код синхронизации:</b>\n\n<code>${token}</code>\n\nВставь его в настройках плагина в Obsidian, чтобы заметки приходили автоматически.`);
                   }
 
                   await sendWithKeyboard(chatId, `✅ В очереди`);
@@ -407,7 +353,6 @@ async function startTelegramPolling() {
       } else {
         const errorText = await response.text();
         console.error(`Telegram getUpdates failed: Status ${response.status} (${response.statusText}). Body:`, errorText);
-        // If there's a conflict or error, wait a little longer before retrying to prevent rapid polling spam
         await new Promise(resolve => setTimeout(resolve, 5000));
       }
     } catch (e: any) {
@@ -419,7 +364,7 @@ async function startTelegramPolling() {
         console.error('👉 Решение 1: Добавьте в файл .env прокси-сервер (например, https://api.telegram-proxy.org или другой рабочий прокси):');
         console.error('   TELEGRAM_API_BASE_URL="https://api.telegram-proxy.org"');
         console.error('👉 Решение 2: Включите системный VPN на вашем компьютере.');
-        console.error('👉 Решение 3: Не запускайте сервер локально вообще! Используйте облачный режим Cloud Sync (он уже работает 24/7 у нас в облаке в Европе и принимает сообщения).\n');
+        console.error('👉 Решение 3: Не запускайте сервер локально вообще! Используйте облачный режим Cloud Sync.\n');
       } else {
         console.error('Error fetching Telegram updates in background:', e);
       }
@@ -441,15 +386,12 @@ async function runServer() {
     next();
   });
 
-  // Запуск фонового прослушивания Telegram
   startTelegramPolling();
 
-  // API эндпоинты
   app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', botTokenConfigured: !!BOT_TOKEN });
   });
 
-  // Информация о боте для фронтенда (без слива токена)
   app.get('/api/config', async (req, res) => {
     try {
       const response = await fetch(`${TELEGRAM_API_BASE}/bot${BOT_TOKEN}/getMe`);
@@ -464,7 +406,6 @@ async function runServer() {
     }
   });
 
-  // Статус поллинга и очередей
   app.get('/api/status', (req, res) => {
     const queueStats = Array.from(userQueues.entries()).map(([code, msgs]) => ({
       syncCode: code,
@@ -482,12 +423,10 @@ async function runServer() {
     });
   });
 
-  // Перезапуск поллинга
   app.post('/api/restart-polling', (req, res) => {
     res.json({ ok: true, message: 'Polling restart triggered' });
   });
 
-  // Проверка валидности токена через Telegram (для фронтенда)
   app.post('/api/test-bot', async (req, res) => {
     const { token } = req.body;
     if (!token) {
@@ -507,7 +446,6 @@ async function runServer() {
     }
   });
 
-  // Эндпоинт для Obsidian-клиента, чтобы забрать обновления конкретного юзера
   app.get('/api/updates', (req, res) => {
     const syncCode = req.query.syncCode as string;
     if (!syncCode) {
@@ -522,7 +460,6 @@ async function runServer() {
     }
 
     const queue = userQueues.get(resolvedToken) || [];
-    // Сбрасываем очередь после отдачи, чтобы не отправлять повторно
     userQueues.set(resolvedToken, []);
 
     res.json({
@@ -531,7 +468,6 @@ async function runServer() {
     });
   });
 
-  // Эндпоинт для скачивания медиа-файлов через сервер без слива приватного токена
   app.get('/api/file', async (req, res) => {
     const fileId = req.query.file_id as string;
     const syncCode = req.query.syncCode as string;
@@ -547,7 +483,6 @@ async function runServer() {
     }
 
     try {
-      // 1. Запрашиваем путь к файлу у Telegram
       const fileInfoUrl = `${TELEGRAM_API_BASE}/bot${BOT_TOKEN}/getFile?file_id=${fileId}`;
       const infoRes = await fetch(fileInfoUrl);
       if (!infoRes.ok) {
@@ -562,12 +497,9 @@ async function runServer() {
       }
 
       const telegramFilePath = infoData.result.file_path;
-
-      // 2. Скачиваем его и стримим клиенту напрямую в сокет
-      // Для скачивания файлов используется специальный url
       const downloadUrl = TELEGRAM_API_BASE.includes('api.telegram.org') 
         ? `https://api.telegram.org/file/bot${BOT_TOKEN}/${telegramFilePath}`
-        : `${TELEGRAM_API_BASE}/file/bot${BOT_TOKEN}/${telegramFilePath}`; // Поддержка структуры зеркала
+        : `${TELEGRAM_API_BASE}/file/bot${BOT_TOKEN}/${telegramFilePath}`;
       
       const fileRes = await fetch(downloadUrl);
       if (!fileRes.ok || !fileRes.body) {
@@ -577,7 +509,6 @@ async function runServer() {
 
       res.setHeader('Content-Type', 'application/octet-stream');
       
-      // Стриминг бинарных чанков
       const reader = fileRes.body.getReader();
       const pump = async () => {
         try {
@@ -603,7 +534,6 @@ async function runServer() {
     }
   });
 
-  // Эндпоинт для подтверждения от Obsidian-плагина — сообщение обработано
   app.post('/api/confirm', async (req, res) => {
     const { syncCode, update_ids } = req.body;
     if (!syncCode || !Array.isArray(update_ids) || update_ids.length === 0) {
@@ -638,7 +568,6 @@ async function runServer() {
     res.json({ ok: true, confirmed: toConfirm.length });
   });
 
-  // Эндпоинт для получения поискового запроса от плагина
   app.get('/api/search', (req, res) => {
     const syncCode = req.query.syncCode as string;
     if (!syncCode) {
@@ -657,7 +586,6 @@ async function runServer() {
     res.json({ ok: true, query: item ? item.query : null });
   });
 
-  // Эндпоинт для результатов поиска от плагина
   app.post('/api/search-results', async (req, res) => {
     const { syncCode, query, results } = req.body;
     if (!syncCode || !query) {
@@ -695,7 +623,6 @@ async function runServer() {
     res.json({ ok: true });
   });
 
-  // Подключаем Vite в режиме разработки
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -703,7 +630,6 @@ async function runServer() {
     });
     app.use(vite.middlewares);
   } else {
-    // В продакшене отдаем статический билд
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
