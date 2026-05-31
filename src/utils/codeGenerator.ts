@@ -8,16 +8,16 @@ import * as path from 'path';
 
 interface TelegramSyncSettings {
   syncCode: string;
-  serverUrl: string;
   defaultFolderPath: string;
   mediaPath: string;
   processedMessageIds: string[];
   lastUpdateId: number;
 }
 
+const SYNC_SERVER_URL = '${currentUrl}';
+
 const DEFAULT_SETTINGS: TelegramSyncSettings = {
   syncCode: '',
-  serverUrl: 'http://localhost:3000',
   defaultFolderPath: '${defaultFolder}',
   mediaPath: '${mediaFolder}',
   processedMessageIds: [],
@@ -132,7 +132,7 @@ export default class TelegramSyncPlugin extends Plugin {
         break;
       }
       try {
-        const url = \`\${this.settings.serverUrl}/api/updates?syncCode=\${this.settings.syncCode}\`;
+        const url = \`\${SYNC_SERVER_URL}/api/updates?syncCode=\${this.settings.syncCode}\`;
         // @ts-ignore
         const { requestUrl } = require('obsidian');
         const response = await requestUrl({ url, method: 'GET' });
@@ -153,7 +153,7 @@ export default class TelegramSyncPlugin extends Plugin {
           if (confirmedIds.length > 0) {
             try {
               await requestUrl({
-                url: \`\${this.settings.serverUrl}/api/confirm\`,
+                url: \`\${SYNC_SERVER_URL}/api/confirm\`,
                 method: 'POST',
                 body: JSON.stringify({ syncCode: this.settings.syncCode, update_ids: confirmedIds }),
                 contentType: 'application/json',
@@ -166,14 +166,14 @@ export default class TelegramSyncPlugin extends Plugin {
 
         // Поисковый поллинг
         try {
-          const searchUrl = \`\${this.settings.serverUrl}/api/search?syncCode=\${this.settings.syncCode}\`;
+          const searchUrl = \`\${SYNC_SERVER_URL}/api/search?syncCode=\${this.settings.syncCode}\`;
           const searchRes = await requestUrl({ url: searchUrl, method: 'GET' });
           if (searchRes.status === 200 && searchRes.json?.ok && searchRes.json.query) {
             const query = searchRes.json.query;
             console.log(\`Telegram Sync: Поиск «\${query}»\`);
             const searchResults = await this.searchNotes(query);
             await requestUrl({
-              url: \`\${this.settings.serverUrl}/api/search-results\`,
+              url: \`\${SYNC_SERVER_URL}/api/search-results\`,
               method: 'POST',
               body: JSON.stringify({ syncCode: this.settings.syncCode, query, results: searchResults }),
               contentType: 'application/json',
@@ -294,7 +294,7 @@ date: \${formattedDateForContent}
     try {
       // @ts-ignore
       const { requestUrl } = require('obsidian');
-      const downloadUrl = \`\${this.settings.serverUrl}/api/file?file_id=\${fileId}&syncCode=\${this.settings.syncCode}\`;
+      const downloadUrl = \`\${SYNC_SERVER_URL}/api/file?file_id=\${fileId}&syncCode=\${this.settings.syncCode}\`;
       const fileDataRes = await requestUrl({ url: downloadUrl, method: 'GET', contentType: 'application/octet-stream' });
 
       // @ts-ignore
@@ -362,19 +362,6 @@ class TelegramSyncSettingTab extends PluginSettingTab {
     containerEl.empty();
 
     containerEl.createEl('h2', { text: 'Синхронизация с Telegram (Cloud Sync)' });
-
-    new Setting(containerEl)
-      .setName('Server URL')
-      .setDesc('Адрес сервера (например, http://5.6.7.8:3000)')
-      .addText(text => text
-        .setPlaceholder('http://localhost:3000')
-        .setValue(this.plugin.settings.serverUrl || 'http://localhost:3000')
-        .onChange(async (value) => {
-          this.plugin.settings.serverUrl = value.trim() || 'http://localhost:3000';
-          await this.plugin.saveSettings();
-          this.plugin.stopPolling();
-          this.plugin.startPolling();
-        }));
 
     new Setting(containerEl)
       .setName('Код синхронизации (Sync Code)')
@@ -495,7 +482,6 @@ module.exports = class TelegramSyncPlugin extends Plugin {
   async loadSettings() {
     this.settings = Object.assign({
       syncCode: '',
-      serverUrl: 'http://localhost:3000',
       defaultFolderPath: '${defaultFolder}',
       mediaPath: '${mediaFolder}',
       processedMessageIds: [],
@@ -532,7 +518,7 @@ module.exports = class TelegramSyncPlugin extends Plugin {
         break;
       }
       try {
-        const url = \`\${this.settings.serverUrl}/api/updates?syncCode=\${this.settings.syncCode}\`;
+        const url = \`\${SYNC_SERVER_URL}/api/updates?syncCode=\${this.settings.syncCode}\`;
         const response = await requestUrl({ url, method: 'GET' });
         
         if (response.status === 200 && response.json && response.json.ok) {
@@ -551,7 +537,7 @@ module.exports = class TelegramSyncPlugin extends Plugin {
           if (confirmedIds.length > 0) {
             try {
               await requestUrl({
-                url: \`\${this.settings.serverUrl}/api/confirm\`,
+                url: \`\${SYNC_SERVER_URL}/api/confirm\`,
                 method: 'POST',
                 body: JSON.stringify({ syncCode: this.settings.syncCode, update_ids: confirmedIds }),
                 contentType: 'application/json',
@@ -564,14 +550,14 @@ module.exports = class TelegramSyncPlugin extends Plugin {
 
         // Поисковый поллинг
         try {
-          const searchUrl = \`\${this.settings.serverUrl}/api/search?syncCode=\${this.settings.syncCode}\`;
+          const searchUrl = \`\${SYNC_SERVER_URL}/api/search?syncCode=\${this.settings.syncCode}\`;
           const searchRes = await requestUrl({ url: searchUrl, method: 'GET' });
           if (searchRes.status === 200 && searchRes.json?.ok && searchRes.json.query) {
             const query = searchRes.json.query;
             console.log(\`Telegram Sync: Поиск «\${query}»\`);
             const searchResults = await this.searchNotes(query);
             await requestUrl({
-              url: \`\${this.settings.serverUrl}/api/search-results\`,
+              url: \`\${SYNC_SERVER_URL}/api/search-results\`,
               method: 'POST',
               body: JSON.stringify({ syncCode: this.settings.syncCode, query, results: searchResults }),
               contentType: 'application/json',
@@ -665,7 +651,7 @@ date: \${formattedDateForContent}
 
   async downloadTelegramFile(fileId, type, originalName) {
     try {
-      const downloadUrl = \`\${this.settings.serverUrl}/api/file?file_id=\${fileId}&syncCode=\${this.settings.syncCode}\`;
+      const downloadUrl = \`\${SYNC_SERVER_URL}/api/file?file_id=\${fileId}&syncCode=\${this.settings.syncCode}\`;
       const fileDataRes = await requestUrl({ url: downloadUrl, method: 'GET', contentType: 'application/octet-stream' });
       
       const vaultBasePath = this.app.vault.adapter.getBasePath();
@@ -728,19 +714,6 @@ class TelegramSyncSettingTab extends PluginSettingTab {
     containerEl.empty();
 
     containerEl.createEl('h2', { text: 'Синхронизация с Telegram (Cloud Sync)' });
-
-    new Setting(containerEl)
-      .setName('Server URL')
-      .setDesc('Адрес сервера (например, http://5.6.7.8:3000)')
-      .addText(text => text
-        .setPlaceholder('http://localhost:3000')
-        .setValue(this.plugin.settings.serverUrl || 'http://localhost:3000')
-        .onChange(async (value) => {
-          this.plugin.settings.serverUrl = value.trim() || 'http://localhost:3000';
-          await this.plugin.saveSettings();
-          this.plugin.stopPolling();
-          this.plugin.startPolling();
-        }));
 
     new Setting(containerEl)
       .setName('Код синхронизации (Sync Code)')
@@ -830,7 +803,7 @@ export function generateStylesCss(): string {
 `;
 }
 
-export function generateReadme(_currentUrl: string): string {
+export function generateReadme(currentUrl: string): string {
   return `# Инструкция по установке и настройке плагина Telegram Sync
 
 Этот плагин предназначен для переноса важных сообщений и фотографий из Telegram прямо в локальное хранилище Obsidian.
@@ -841,33 +814,24 @@ export function generateReadme(_currentUrl: string): string {
 
 ## 🛠 Быстрый запуск
 
-1. Откройте Telegram-бота, настроенного в этой системе.
-2. Отправьте ему команду \`/start\`.
-3. Бот мгновенно выдаст ваш персональный **Код синхронизации** (например, \`123456789\`).
-4. В Obsidian открой **Настройки → Telegram Sync Pro**.
-5. Укажи **Server URL** — адрес сервера (например, \`http://5.6.7.8:3000\`).
-6. Укажи **Код синхронизации**, полученный от бота.
-7. Готово! Всё отправленное боту мгновенно перенесётся в ваш Obsidian. При этом чужие сообщения вы никогда не получите — полная приватность!
+1. Откройте Telegram-бота: \`@obsi123123bot\`
+2. Отправьте команду \`/start\`.
+3. Бот выдаст ваш персональный **Код синхронизации**.
+4. Установите плагин (инструкция ниже).
+5. В настройках плагина укажите **Код синхронизации**.
+6. Готово! Сообщения будут приходить в Obsidian автоматически.
 
 ---
 
 ## 📦 Установка из ZIP
 
-Этот архив содержит всё необходимое для установки плагина:
+1. В Obsidian отключите **Безопасный режим** (Настройки → Community plugins).
+2. Откройте папку хранилища (Vault), перейдите в \`.obsidian/plugins/\`.
+3. Создайте папку \`obsidian-telegram-sync\` и распакуйте туда этот архив.
+4. Перезапустите Obsidian, включите **Telegram Sync Pro**.
 
-1. Убедитесь, что в Obsidian в разделе **Настройки → Community plugins** отключен Безопасный режим.
-2. Откройте папку вашего хранилища (Vault) на компьютере.
-3. Перейдите в \`.obsidian/plugins/\` (если папки \`plugins\` нет — создайте её).
-4. Создайте папку \`obsidian-telegram-sync\`.
-5. Распакуйте содержимое этого ZIP-архива в \`.obsidian/plugins/obsidian-telegram-sync/\`.
-6. Перезапустите Obsidian.
-7. Включите плагин **Telegram Sync Pro** в списке установленных плагинов.
+## ⚙️ Настройка
 
-## ⚙️ Настройка после установки
-
-1. В Obsidian зайдите в **Настройки → Community plugins → Telegram Sync Pro**.
-2. В поле **Server URL** введите адрес сервера (тот, который выдал бот или администратор).
-3. В поле **Sync Code** введите код, полученный от бота после команды \`/start\`.
-4. Готово! Плагин начнёт автоматически синхронизировать сообщения.
+Откройте **Настройки → Community plugins → Telegram Sync Pro** и введите **Код синхронизации**, полученный от бота.
 `;
 }
