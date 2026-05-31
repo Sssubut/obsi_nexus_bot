@@ -1,6 +1,17 @@
+function getServerUrl(): string {
+  // Берем URL из настроек хостинга. Если его нет, используем локальный.
+  let url = process.env.APP_URL || 'http://localhost:3000';
+  // Убираем слеш на конце, если он случайно добавился (чтобы не было двойных слешей в путях)
+  if (url.endsWith('/')) {
+    url = url.slice(0, -1);
+  }
+  return url;
+}
+
 export function generateMainTs(): string {
   const defaultFolder = 'Telegram Notes';
   const mediaFolder = 'Telegram Notes/Media';
+  const serverUrl = getServerUrl();
 
   return `import { App, Plugin, PluginSettingTab, Setting, Notice } from 'obsidian';
 import * as fs from 'fs/promises';
@@ -14,7 +25,7 @@ interface TelegramSyncSettings {
   lastUpdateId: number;
 }
 
-const SYNC_SERVER_URL = 'https://bot-1780261529-9605-sssubut.bothost.tech';
+const SYNC_SERVER_URL = '${serverUrl}';
 
 const DEFAULT_SETTINGS: TelegramSyncSettings = {
   syncCode: '',
@@ -194,7 +205,7 @@ export default class TelegramSyncPlugin extends Plugin {
     if (!msg.message_id) return false;
 
     if (this.processedSet.has(msg.message_id)) {
-      return;
+      return false;
     }
 
     try {
@@ -289,7 +300,6 @@ date: \${formattedDateForContent}
     }
   }
 
-  // Загрузка файлов
   async downloadTelegramFile(fileId: string, type: 'photo' | 'document', originalName?: string): Promise<string | null> {
     try {
       // @ts-ignore
@@ -321,7 +331,6 @@ date: \${formattedDateForContent}
     }
   }
 
-  // Поиск по заметкам в vault
   async searchNotes(query: string): Promise<{ filename: string; preview: string }[]> {
     const vaultBasePath = this.app.vault.adapter.getBasePath();
     const results: { filename: string; preview: string }[] = [];
@@ -405,13 +414,13 @@ class TelegramSyncSettingTab extends PluginSettingTab {
 export function generatePureMainJs(): string {
   const defaultFolder = 'Telegram Notes';
   const mediaFolder = 'Telegram Notes/Media';
+  const serverUrl = getServerUrl();
 
   return `const { Plugin, PluginSettingTab, Setting, Notice, requestUrl } = require('obsidian');
 const fs = require('fs/promises');
 const path = require('path');
 
-const SYNC_SERVER_URL = 'https://bot-1780261529-9605-sssubut.bothost.tech';
-// const SYNC_SERVER_URL = 'http://localhost:3000';
+const SYNC_SERVER_URL = '${serverUrl}';
 
 // Преобразует entities Telegram → Markdown
 function formatTelegramText(text, entities) {
@@ -817,7 +826,7 @@ export function generateReadme(): string {
 
 ## 🛠 Быстрый запуск
 
-1. Откройте Telegram-бота: \`@obsi123123bot\`
+1. Откройте Telegram-бота.
 2. Отправьте команду \`/start\`.
 3. Бот выдаст ваш персональный **Код синхронизации**.
 4. Установите плагин (инструкция ниже).
