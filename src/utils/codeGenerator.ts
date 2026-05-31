@@ -411,6 +411,7 @@ const fs = require('fs/promises');
 const path = require('path');
 
 const SYNC_SERVER_URL = 'https://bot-1780261529-9605-sssubut.bothost.tech';
+// const SYNC_SERVER_URL = 'http://localhost:3000';
 
 // Преобразует entities Telegram → Markdown
 function formatTelegramText(text, entities) {

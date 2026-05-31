@@ -31,14 +31,14 @@ var import_dotenv = __toESM(require("dotenv"), 1);
 var import_jszip = __toESM(require("jszip"), 1);
 
 // src/utils/codeGenerator.ts
-function generatePureMainJs(currentUrl) {
+function generatePureMainJs() {
   const defaultFolder = "Telegram Notes";
   const mediaFolder = "Telegram Notes/Media";
   return `const { Plugin, PluginSettingTab, Setting, Notice, requestUrl } = require('obsidian');
 const fs = require('fs/promises');
 const path = require('path');
 
-const SYNC_SERVER_URL = '${currentUrl}';
+const SYNC_SERVER_URL = 'https://bot-1780261529-9605-sssubut.bothost.tech';
 
 // \u041F\u0440\u0435\u043E\u0431\u0440\u0430\u0437\u0443\u0435\u0442 entities Telegram \u2192 Markdown
 function formatTelegramText(text, entities) {
@@ -568,7 +568,7 @@ async function sendPluginZip(chatId) {
   const serverUrl = getServerUrl();
   try {
     const zip = new import_jszip.default();
-    zip.file("main.js", generatePureMainJs(serverUrl));
+    zip.file("main.js", generatePureMainJs());
     zip.file("manifest.json", generateManifestJson());
     zip.file("styles.css", generateStylesCss());
     zip.file("README.md", generateReadme(serverUrl));
